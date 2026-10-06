@@ -1,0 +1,14 @@
+Crie um roteiro para um vídeo curto de 15 segundos no formato vertical (9:16) para redes sociais como TikTok, Reels e Shorts.
+
+O vídeo deve ser visualmente impactante, com cenas dinâmicas e narração em português do Brasil.
+
+Estruture o roteiro no seguinte formato JSON:
+{
+  "titulo": "Título chamativo do vídeo",
+  "prompt_visual": "Descrição detalhada em inglês das cenas visuais para geração de vídeo por IA. Seja específico sobre: iluminação, ângulo de câmera, movimento, cores, estilo cinematográfico. Use termos como: cinematic, 4K, vertical format 9:16, slow motion, close-up, etc.",
+  "narracao": "Texto da narração em português que será lida por TTS (máximo 3 frases curtas e impactantes)",
+  "duracao_segundos": 15,
+  "estilo": "Estilo do vídeo (ex: cinematic, lifestyle, documentary, etc.)"
+}
+
+Responda SOMENTE com o JSON, sem texto adicional antes ou depois.
