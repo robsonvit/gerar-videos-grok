@@ -218,9 +218,7 @@ def generate_video_on_grok(
 
                 page = context.new_page()
 
-                # Navega para o Grok
-                logger.info(f"Navegando para: {url}")
-                page.goto(url, wait_until="networkidle", timeout=60000)
+                page.goto(url, wait_until="domcontentloaded", timeout=60000)
 
                 if screenshot_on_error:
                     take_screenshot(page, screenshot_dir, f"page_loaded_attempt{attempt}")
