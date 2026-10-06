@@ -325,3 +325,4 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Execução:** #${{ github.run_number }} | **Trigger:** ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
           echo "**Título:** ${{ needs.generate-script.outputs.script_title }}" >> $GITHUB_STEP_SUMMARY
+
