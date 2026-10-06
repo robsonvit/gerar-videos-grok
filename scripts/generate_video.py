@@ -228,7 +228,7 @@ def generate_video_on_grok(
                 logger.info("Aguardando campo de input...")
                 try:
                     page.wait_for_selector(
-                        "textarea",
+                        "textarea, [contenteditable='true']",
                         timeout=30000
                     )
                 except PlaywrightTimeout:
@@ -242,7 +242,7 @@ def generate_video_on_grok(
 
                 # Insere o prompt
                 logger.info(f"Inserindo prompt ({len(prompt)} chars)...")
-                input_selector = "textarea"
+                input_selector = "textarea, [contenteditable='true']"
                 page.fill(input_selector, prompt)
                 time.sleep(1)
 
