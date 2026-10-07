@@ -71,7 +71,7 @@ def load_cookies_from_env() -> list | None:
         return None
 
 
-def wait_for_video_ready(page, timeout_ms: int, poll_interval_ms: int, screenshot_dir: Path) -> str | None:
+def wait_for_video_ready(page, timeout_ms: int, poll_interval_ms: int, screenshot_dir: Path, existing_srcs: set = None) -> str | None:
     """
     Aguarda o vídeo ficar disponível na interface do Grok.
     Retorna a URL do vídeo ou None em caso de timeout.
@@ -82,6 +82,9 @@ def wait_for_video_ready(page, timeout_ms: int, poll_interval_ms: int, screensho
     logger.info("Aguardando geração do vídeo...")
     start_time = time.time()
     timeout_s = timeout_ms / 1000
+    
+    if existing_srcs is None:
+        existing_srcs = set()
 
     while (time.time() - start_time) < timeout_s:
         try:
@@ -91,8 +94,9 @@ def wait_for_video_ready(page, timeout_ms: int, poll_interval_ms: int, screensho
             for video in video_elements:
                 src = video.get_attribute("src")
                 if src and ("blob:" in src or ".mp4" in src or "media" in src.lower()):
-                    logger.info(f"Vídeo detectado com src: {src[:80]}...")
-                    return src
+                    if src not in existing_srcs:
+                        logger.info(f"Vídeo detectado com src: {src[:80]}...")
+                        return src
 
             # Verifica se há mensagem de erro na página
             error_texts = [
@@ -283,6 +287,17 @@ def generate_video_on_grok(
                 except Exception as e:
                     logger.warning(f"Não foi possível selecionar modo vídeo: {e}")
 
+                # Coleta vídeos já existentes na página para ignorá-los
+                existing_srcs = set()
+                try:
+                    video_els = page.query_selector_all("video, video source, source")
+                    for el in video_els:
+                        src = el.get_attribute("src")
+                        if src: existing_srcs.add(src)
+                except Exception as e:
+                    pass
+                logger.info(f"Encontrados {len(existing_srcs)} vídeos antigos na página para ignorar.")
+
                 # Envia o prompt
                 # SELETOR: Botão de envio
                 logger.info("Enviando prompt...")
@@ -307,7 +322,8 @@ def generate_video_on_grok(
                     page=page,
                     timeout_ms=timeout_s * 1000,
                     poll_interval_ms=poll_interval_s * 1000,
-                    screenshot_dir=screenshot_dir
+                    screenshot_dir=screenshot_dir,
+                    existing_srcs=existing_srcs
                 )
 
                 if video_src:
