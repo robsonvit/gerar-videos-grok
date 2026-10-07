@@ -262,36 +262,46 @@ def generate_video_on_grok(
                     video_button = page.query_selector("button:has-text('Imagem') + button")
                     if video_button:
                         video_button.click()
-                        logger.info("Modo Vídeo selecionado")
+                        logger.info("Modo Vídeo selecionado (clique)")
                         time.sleep(0.5)
-                        
-                        # Seleciona 15s usando locator exato do botão de duração
-                        try:
-                            # O botão real tem o aria-label 'Duração do vídeo'
-                            btn_duration = page.locator("[aria-label='Duração do vídeo'], [title='Duração do vídeo']").first
-                            if btn_duration.is_visible(timeout=1000):
-                                text_now = btn_duration.inner_text().strip()
-                                if '15' in text_now:
-                                    logger.info("O vídeo já está configurado para 15s.")
-                                else:
-                                    btn_duration.click(force=True)
-                                    logger.info(f"Menu de duração aberto. Estava em '{text_now}'.")
-                                    time.sleep(1)
-                                    
-                                    # Agora clica em 15s no menu aberto
-                                    btn_15s = page.locator("text='15s'").last
-                                    if btn_15s.is_visible(timeout=1000):
-                                        btn_15s.click(force=True)
-                                        logger.info("Opção 15s selecionada com sucesso!")
-                                    else:
-                                        logger.warning("Opção 15s não visível no menu.")
-                            else:
-                                logger.warning("Botão de 'Duração do vídeo' não encontrado pelo aria-label.")
-                        except Exception as inner_e:
-                            logger.warning(f"Erro ao selecionar duração de 15s: {inner_e}")
-                            
+                    else:
+                        logger.info("Botão de modo vídeo não encontrado - possivelmente já está em modo vídeo.")
                 except Exception as e:
                     logger.warning(f"Não foi possível selecionar modo vídeo: {e}")
+
+                # Seleciona duração 15s - INDEPENDENTE do modo vídeo
+                # O aria-label exato conforme dump: 'Duração do vídeo'
+                try:
+                    time.sleep(0.5)
+                    btn_duration = page.locator("[aria-label='Duração do vídeo']").first
+                    if btn_duration.is_visible(timeout=2000):
+                        text_now = btn_duration.inner_text().strip()
+                        logger.info(f"Botão de duração encontrado. Valor atual: '{text_now}'")
+                        if '15' in text_now:
+                            logger.info("Duração já está em 15s.")
+                        else:
+                            btn_duration.click(force=True)
+                            logger.info("Menu de duração aberto. Aguardando opções...")
+                            time.sleep(1.5)
+                            
+                            # Busca a opção 15s no menu aberto
+                            btn_15s = page.locator("text='15s'").last
+                            if btn_15s.is_visible(timeout=2000):
+                                btn_15s.click(force=True)
+                                logger.info("✅ Duração de 15s selecionada com sucesso!")
+                                time.sleep(0.5)
+                            else:
+                                # Fallback: tenta pelo texto sem aspas
+                                all_els = page.locator("text=15s").all()
+                                if all_els:
+                                    all_els[-1].click(force=True)
+                                    logger.info("✅ Duração de 15s selecionada via fallback!")
+                                else:
+                                    logger.warning("❌ Opção 15s não encontrada no menu.")
+                    else:
+                        logger.warning("❌ Botão de 'Duração do vídeo' não visível após 2s.")
+                except Exception as e:
+                    logger.warning(f"Erro ao selecionar duração de 15s: {e}")
 
                 # Coleta vídeos já existentes na página para ignorá-los
                 existing_srcs = set()
