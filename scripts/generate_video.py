@@ -265,41 +265,28 @@ def generate_video_on_grok(
                         logger.info("Modo Vídeo selecionado")
                         time.sleep(0.5)
                         
-                        # DUMP DOS BOTÕES PARA DEBUG
+                        # Seleciona 15s usando locator exato do botão de duração
                         try:
-                            btns = page.query_selector_all("button, [role='button']")
-                            btn_texts = []
-                            for i, b in enumerate(btns):
-                                text = b.inner_text().strip().replace('\n', ' ')
-                                aria = b.get_attribute('aria-label') or ''
-                                btn_texts.append(f"[{i}] text:'{text}' aria:'{aria}'")
-                            logger.info(f"Botões na tela: {', '.join(btn_texts)}")
-                        except Exception as e:
-                            logger.warning(f"Erro no dump de botões: {e}")
-
-                        # Seleciona 15s usando eventos nativos do Playwright
-                        try:
-                            # 1. Tenta achar o botão de 5s para abrir o menu
-                            btn_5s = page.locator("text=5s").last
-                            if btn_5s.is_visible(timeout=1000):
-                                btn_5s.click(force=True)
-                                logger.info("Botão 5s clicado. Aguardando menu...")
-                                time.sleep(1)
-                                
-                                # 2. Tenta achar a opção 15s no menu aberto
-                                btn_15s = page.locator("text=15s").last
-                                if btn_15s.is_visible(timeout=1000):
-                                    btn_15s.click(force=True)
-                                    logger.info("Opção 15s selecionada com sucesso!")
+                            # O botão real tem o aria-label 'Duração do vídeo'
+                            btn_duration = page.locator("[aria-label='Duração do vídeo'], [title='Duração do vídeo']").first
+                            if btn_duration.is_visible(timeout=1000):
+                                text_now = btn_duration.inner_text().strip()
+                                if '15' in text_now:
+                                    logger.info("O vídeo já está configurado para 15s.")
                                 else:
-                                    logger.warning("Opção 15s não visível no menu.")
+                                    btn_duration.click(force=True)
+                                    logger.info(f"Menu de duração aberto. Estava em '{text_now}'.")
+                                    time.sleep(1)
+                                    
+                                    # Agora clica em 15s no menu aberto
+                                    btn_15s = page.locator("text='15s'").last
+                                    if btn_15s.is_visible(timeout=1000):
+                                        btn_15s.click(force=True)
+                                        logger.info("Opção 15s selecionada com sucesso!")
+                                    else:
+                                        logger.warning("Opção 15s não visível no menu.")
                             else:
-                                # Se não achou 5s, talvez já esteja em 15s
-                                btn_15s_check = page.locator("text=15s").last
-                                if btn_15s_check.is_visible(timeout=1000):
-                                    logger.info("Botão 15s já estava visível (possivelmente selecionado).")
-                                else:
-                                    logger.warning("Não encontrou nem 5s nem 15s na tela.")
+                                logger.warning("Botão de 'Duração do vídeo' não encontrado pelo aria-label.")
                         except Exception as inner_e:
                             logger.warning(f"Erro ao selecionar duração de 15s: {inner_e}")
                             
