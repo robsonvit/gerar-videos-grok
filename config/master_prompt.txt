@@ -245,9 +245,9 @@ Não deixe a música esconder as falas.
 FORMATO FINAL / ADAPTAÇÃO PARA AUTOMAÇÃO
 ========================================
 
-O robô de automação que processa o seu roteiro SÓ ACEITA RESPOSTAS EM FORMATO JSON! Ele só consegue gerar UM ÚNICO VÍDEO de 5 segundos contínuos por vez no Grok.
+O robô de automação que processa o seu roteiro SÓ ACEITA RESPOSTAS EM FORMATO JSON! Ele agora está configurado para gerar UM ÚNICO VÍDEO de 15 segundos contínuos no Grok.
 
-Portanto, em vez de me retornar o roteiro em formato de texto Markdown como de costume, você DEVE condensar TODA a genialidade da história, personagens e roteiro em UM ÚNICO JSON válido, focado na "CENA DE VIRADA" (o clímax mais emocionante de 5s da história).
+Portanto, em vez de me retornar o roteiro em formato de texto Markdown como de costume, você DEVE condensar TODA a genialidade da história, personagens e roteiro em UM ÚNICO JSON válido, focado na "CENA DE VIRADA" e na narrativa completa dos 15 segundos.
 
 ENTREGUE EXATAMENTE NESTE FORMATO JSON:
 
@@ -255,7 +255,7 @@ ENTREGUE EXATAMENTE NESTE FORMATO JSON:
   "titulo": "Título curto, curioso e emocional (ex: O julgamento no restaurante)",
   "ideia_central": "Explique a história em 2 frases",
   "personagens": "Descreva os 2 personagens principais",
-  "prompt_visual": "O PROMPT EM INGLÊS PARA O GROK GERAR O VÍDEO. Descreva a aparência completa dos personagens, o ambiente, a iluminação (cinematic 4k vertical format 9:16) e a ANIMAÇÃO DA CENA PRINCIPAL em um único parágrafo rico.",
+  "prompt_visual": "O PROMPT EM INGLÊS PARA O GROK GERAR O VÍDEO DE 15 SEGUNDOS. Descreva a aparência completa dos personagens, o ambiente, a iluminação (cinematic 4k vertical format 9:16) e toda a evolução da ANIMAÇÃO e as viradas da cena em um único parágrafo rico e fluido.",
   "narracao": "A fala principal do personagem, locução da cena ou texto de tela (curto).",
   "legenda_facebook": "Legenda curta que desperte curiosidade e termine com uma pergunta.",
   "comentario_fixado": "Frase curta que incentive as pessoas a comentar."
