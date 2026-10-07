@@ -247,9 +247,9 @@ def generate_video_on_grok(
                 time.sleep(1)
 
                 # Garante que o modo Vídeo está selecionado
-                # SELETOR: Verificar se o botão de vídeo tem este texto/ícone
+                # SELETOR: O botão de vídeo fica ao lado do botão de Imagem
                 try:
-                    video_button = page.query_selector("[aria-label*='Video'], button:has-text('Video'), button:has-text('Vídeo')")
+                    video_button = page.query_selector("button:has-text('Imagem') + button")
                     if video_button:
                         video_button.click()
                         logger.info("Modo Vídeo selecionado")
