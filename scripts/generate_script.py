@@ -115,20 +115,65 @@ def call_openrouter(
         return None
 
 
+def parse_structured_response(content: str) -> dict | None:
+    """
+    Parseia a resposta estruturada do novo master prompt (seções de texto).
+    Extrai: CONCEITO, GANCHO, PROMPT PARA GROK IMAGINE, LEGENDA, HASHTAGS.
+    """
+    import re
+
+    def extract_section(text: str, section: str) -> str:
+        """Extrai o conteúdo de uma seção do texto estruturado."""
+        # Tenta com ### SECTION ou ** SECTION ** ou apenas SECTION
+        patterns = [
+            rf"###\s*{re.escape(section)}\s*\n(.*?)(?=###|\Z)",
+            rf"\*\*{re.escape(section)}\*\*\s*\n(.*?)(?=\*\*|\Z)",
+            rf"{re.escape(section)}\s*\n(.*?)(?=\n[A-Z#*]|\Z)",
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, text, re.IGNORECASE | re.DOTALL)
+            if match:
+                return match.group(1).strip()
+        return ""
+
+    conceito = extract_section(content, "CONCEITO")
+    gancho = extract_section(content, "GANCHO")
+    prompt_grok = extract_section(content, "PROMPT PARA GROK IMAGINE")
+    legenda = extract_section(content, "LEGENDA PARA FACEBOOK")
+    hashtags = extract_section(content, "HASHTAGS")
+
+    # Se não achou seções estruturadas, usa o conteúdo completo como prompt
+    if not prompt_grok:
+        logger.warning("Seção 'PROMPT PARA GROK IMAGINE' não encontrada. Usando conteúdo completo como prompt.")
+        prompt_grok = content.strip()
+
+    if not conceito:
+        conceito = "Vídeo Viral Brasil"
+
+    return {
+        "titulo": conceito,
+        "prompt_visual": prompt_grok,
+        "narracao": gancho,
+        "legenda": legenda,
+        "hashtags": hashtags,
+        "conceito": conceito,
+        "gancho": gancho,
+    }
+
+
 def validate_script(content: str, settings: dict) -> dict | None:
     """Valida e parseia o roteiro gerado."""
     script_config = settings.get("script", {})
     min_len = script_config.get("min_length_chars", 50)
-    max_len = script_config.get("max_length_chars", 500)
+    max_len = script_config.get("max_length_chars", 2000)
     validate_json = script_config.get("validate_json", True)
 
     if not content:
         logger.error("Conteúdo do roteiro está vazio")
         return None
 
-    # Tenta extrair JSON se validate_json estiver ativo
+    # Tenta parsear como JSON primeiro (compatibilidade com formato antigo)
     if validate_json:
-        # Remove possíveis blocos de código markdown
         content_clean = content
         if "```json" in content:
             start = content.find("```json") + 7
@@ -141,35 +186,36 @@ def validate_script(content: str, settings: dict) -> dict | None:
 
         try:
             script_data = json.loads(content_clean)
-        except json.JSONDecodeError as e:
-            logger.error(f"Roteiro não é um JSON válido: {e}")
-            logger.debug(f"Conteúdo recebido: {content[:300]}")
-            return None
-
-        # Valida campos obrigatórios
-        required_fields = ["titulo", "prompt_visual", "narracao"]
-        for field in required_fields:
-            if field not in script_data:
-                logger.error(f"Campo obrigatório ausente no roteiro: {field}")
+            # Formato JSON antigo — valida campos
+            required_fields = ["titulo", "prompt_visual", "narracao"]
+            for field in required_fields:
+                if field not in script_data:
+                    raise ValueError(f"Campo obrigatório ausente: {field}")
+            logger.info(f"Roteiro em formato JSON válido: '{script_data.get('titulo')}'")
+        except (json.JSONDecodeError, ValueError):
+            # Não é JSON — tenta parsear como texto estruturado (novo formato)
+            logger.info("Resposta não é JSON. Tentando parsear como texto estruturado...")
+            script_data = parse_structured_response(content)
+            if not script_data:
+                logger.error("Falha ao parsear resposta como texto estruturado.")
                 return None
+            logger.info(f"Roteiro parseado do texto estruturado: '{script_data.get('titulo')}'")
+    else:
+        script_data = parse_structured_response(content)
 
-        prompt_visual = script_data.get("prompt_visual", "")
-        if len(prompt_visual) < min_len:
-            logger.error(
-                f"Prompt visual muito curto: {len(prompt_visual)} chars (mínimo: {min_len})"
-            )
-            return None
+    # Valida tamanho do prompt visual
+    prompt_visual = script_data.get("prompt_visual", "")
+    if len(prompt_visual) < min_len:
+        logger.error(f"Prompt visual muito curto: {len(prompt_visual)} chars (mínimo: {min_len})")
+        return None
 
-        if len(prompt_visual) > max_len:
-            logger.warning(
-                f"Prompt visual muito longo ({len(prompt_visual)} chars), truncando para {max_len}"
-            )
-            script_data["prompt_visual"] = prompt_visual[:max_len]
+    if len(prompt_visual) > max_len:
+        logger.warning(f"Prompt visual muito longo ({len(prompt_visual)} chars), truncando para {max_len}")
+        script_data["prompt_visual"] = prompt_visual[:max_len]
 
-        logger.info(f"Roteiro validado: '{script_data.get('titulo', 'Sem título')}'")
-        return script_data
+    logger.info(f"Roteiro validado: '{script_data.get('titulo', 'Sem título')}'")
+    return script_data
 
-    return {"raw_content": content}
 
 
 def save_script(script_data: dict, output_dir: Path) -> Path:
