@@ -349,26 +349,26 @@ def main():
 
     settings = load_config(base_dir)
 
-    # Obtém o(s) prompt(s) visual(is)
-    prompts = []
+    # Obtém o prompt visual
     if script_path:
         script_data = load_script(script_path)
-        if "cenas" in script_data:
-            prompts = [cena.get("prompt_visual", "") for cena in script_data["cenas"] if cena.get("prompt_visual")]
-        else:
-            prompts = [script_data.get("prompt_visual", prompt_visual)]
+        prompt = script_data.get("prompt_visual", prompt_visual)
         titulo = script_data.get("titulo", "video")
     else:
-        prompts = [prompt_visual] if prompt_visual else []
+        prompt = prompt_visual
         titulo = "video"
 
-    if not prompts:
-        logger.error("Nenhum prompt visual encontrado. Não é possível gerar o vídeo.")
+    if not prompt:
+        logger.error("Prompt visual vazio. Não é possível gerar o vídeo.")
         sys.exit(1)
 
-    logger.info("=== INICIANDO GERAÇÃO DE VÍDEOS ===")
+    # Adiciona configurações de formato ao prompt se não presentes
+    if "9:16" not in prompt and "vertical" not in prompt.lower():
+        prompt = f"{prompt}, vertical format 9:16, cinematic quality, 15 seconds"
+
+    logger.info("=== INICIANDO GERAÇÃO DE VÍDEO ===")
     logger.info(f"Título: {titulo}")
-    logger.info(f"Quantidade de cenas: {len(prompts)}")
+    logger.info(f"Prompt: {prompt[:100]}...")
 
     # Configura diretórios de saída
     output_config = settings.get("output", {})
@@ -378,43 +378,36 @@ def main():
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     safe_titulo = "".join(c for c in titulo if c.isalnum() or c in " _-").strip()[:30]
-    
-    video_paths = []
-    
-    for idx, prompt in enumerate(prompts):
-        if "9:16" not in prompt and "vertical" not in prompt.lower():
-            prompt = f"{prompt}, vertical format 9:16, cinematic quality"
-            
-        logger.info(f"\n--- Gerando cena {idx+1}/{len(prompts)} ---")
-        logger.info(f"Prompt: {prompt[:100]}...")
-        
-        part_filename = f"video_{safe_titulo}_{timestamp}_part{idx+1}.mp4"
-        part_path = videos_dir / part_filename
+    video_filename = f"video_{safe_titulo}_{timestamp}.mp4"
+    video_output_path = videos_dir / video_filename
 
-        success = generate_video_on_grok(
-            prompt=prompt,
-            output_path=part_path,
-            settings=settings,
-            screenshot_dir=screenshots_dir
-        )
+    # Gera o vídeo
+    success = generate_video_on_grok(
+        prompt=prompt,
+        output_path=video_output_path,
+        settings=settings,
+        screenshot_dir=screenshots_dir
+    )
 
-        if not success or not validate_video_file(part_path):
-            logger.error(f"Falha na geração da cena {idx+1}. Abortando pipeline.")
-            sys.exit(1)
-            
-        video_paths.append(str(part_path))
+    if not success:
+        logger.error("Falha na geração do vídeo. Abortando pipeline.")
+        sys.exit(1)
 
-    # Exporta caminhos para o próximo step
-    joined_paths = ",".join(video_paths)
+    # Valida o arquivo gerado
+    if not validate_video_file(video_output_path):
+        logger.error("Arquivo de vídeo inválido. Abortando pipeline.")
+        sys.exit(1)
+
+    # Exporta caminho para o próximo step
     github_output = os.environ.get("GITHUB_OUTPUT", "")
     if github_output:
         with open(github_output, "a") as f:
-            f.write(f"video_path={joined_paths}\n")
-            f.write(f"video_filename=video_{safe_titulo}_{timestamp}_FINAL.mp4\n")
+            f.write(f"video_path={video_output_path}\n")
+            f.write(f"video_filename={video_filename}\n")
 
-    logger.info("=== VÍDEOS GERADOS COM SUCESSO ===")
-    logger.info(f"Arquivos: {joined_paths}")
-    print(f"VIDEO_PATH={joined_paths}")
+    logger.info("=== VÍDEO GERADO COM SUCESSO ===")
+    logger.info(f"Arquivo: {video_output_path}")
+    print(f"VIDEO_PATH={video_output_path}")
     return 0
 
 
