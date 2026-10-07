@@ -134,7 +134,7 @@ jobs:
           PROMPT_VISUAL: ${{ needs.generate-script.outputs.prompt_visual }}
         run: |
           python scripts/generate_video.py
-        timeout-minutes: 15
+        timeout-minutes: 30
 
       - name: ✅ Verificar vídeo gerado
         run: |

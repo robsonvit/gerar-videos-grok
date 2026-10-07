@@ -87,7 +87,7 @@ def wait_for_video_ready(page, timeout_ms: int, poll_interval_ms: int, screensho
         try:
             # Tenta localizar elemento de vídeo gerado
             # SELETOR: Atualizar se a interface mudar
-            video_elements = page.query_selector_all("video")
+            video_elements = page.query_selector_all("video, video source, source")
             for video in video_elements:
                 src = video.get_attribute("src")
                 if src and ("blob:" in src or ".mp4" in src or "media" in src.lower()):

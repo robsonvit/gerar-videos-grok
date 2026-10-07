@@ -21,7 +21,7 @@
   "generation": {
     "service": "grok",
     "url": "https://grok.com/imagine",
-    "timeout_seconds": 300,
+    "timeout_seconds": 600,
     "poll_interval_seconds": 15,
     "max_retries": 3,
     "retry_delay_seconds": 30,
