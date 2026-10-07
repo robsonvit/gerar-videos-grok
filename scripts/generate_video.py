@@ -261,21 +261,24 @@ def generate_video_on_grok(
                         logger.info("Modo Vídeo selecionado")
                         time.sleep(0.5)
                         
-                        # Tenta selecionar 15s de duração
+                        # Tenta selecionar 15s de duração via JS robusto
                         try:
-                            # O botão geralmente mostra "5s" ou "10s"
-                            duration_btn = page.query_selector("button:has-text('5s'), button:has-text('10s')")
-                            if duration_btn:
-                                duration_btn.click()
-                                time.sleep(0.5)
-                                # Clica na opção "15s" no menu suspenso
-                                fifteen_option = page.locator("text='15s'").last
-                                if fifteen_option:
-                                    fifteen_option.click()
-                                    logger.info("Duração de 15s selecionada!")
-                                time.sleep(0.5)
+                            page.evaluate("""
+                                () => {
+                                    let btn5s = Array.from(document.querySelectorAll('*')).reverse().find(el => el.textContent.trim() === '5s' && (el.tagName === 'BUTTON' || el.getAttribute('role') === 'button' || el.classList.length > 0));
+                                    if (btn5s) {
+                                        btn5s.click();
+                                        setTimeout(() => {
+                                            let btn15s = Array.from(document.querySelectorAll('*')).reverse().find(el => el.textContent.trim() === '15s' && (el.tagName === 'BUTTON' || el.getAttribute('role') === 'menuitem' || el.classList.length > 0));
+                                            if (btn15s) btn15s.click();
+                                        }, 800);
+                                    }
+                                }
+                            """)
+                            logger.info("Tentativa de seleção de 15s via JS executada.")
+                            time.sleep(1.5)
                         except Exception as inner_e:
-                            logger.warning(f"Não foi possível selecionar duração de 15s: {inner_e}")
+                            logger.warning(f"Não foi possível selecionar duração de 15s via JS: {inner_e}")
                             
                 except Exception as e:
                     logger.warning(f"Não foi possível selecionar modo vídeo: {e}")
