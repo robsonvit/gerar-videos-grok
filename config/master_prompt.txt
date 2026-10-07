@@ -263,9 +263,13 @@ O que acontece nos primeiros 2 segundos.
 
 ### PROMPT PARA GROK IMAGINE
 
-Um prompt completo, detalhado e pronto para copiar e colar, preferencialmente em inglês para as instruções visuais, mantendo obrigatoriamente as falas em português brasileiro.
+Um prompt completo, detalhado e pronto para copiar e colar, ESCRITO INTEIRAMENTE EM PORTUGUÊS DO BRASIL.
+NÃO ESCREVA NADA EM INGLÊS NESSE PROMPT.
 
-O prompt deve incluir a duração desejada, formato vertical 9:16, estética de vídeo casual realista, sequência de ações, áudio e final.
+O prompt deve COMEÇAR com a seguinte instrução exata:
+"Crie um vídeo com áudio e vozes faladas EXCLUSIVAMENTE em Português do Brasil (PT-BR). Nenhuma outra língua é permitida."
+
+O prompt deve incluir a duração desejada, formato vertical 9:16, estética de vídeo casual realista, sequência de ações, áudio em PT-BR e final.
 
 ### LEGENDA PARA FACEBOOK
 
