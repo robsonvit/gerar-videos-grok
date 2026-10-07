@@ -255,8 +255,23 @@ ENTREGUE EXATAMENTE NESTE FORMATO JSON:
   "titulo": "Título curto, curioso e emocional (ex: O julgamento no restaurante)",
   "ideia_central": "Explique a história em 2 frases",
   "personagens": "Descreva os 2 personagens principais",
-  "prompt_visual": "O PROMPT EM INGLÊS PARA O GROK GERAR O VÍDEO. Descreva a aparência completa dos personagens, o ambiente, a iluminação (cinematic 4k vertical format 9:16) e a ANIMAÇÃO DA CENA PRINCIPAL em um único parágrafo rico.",
-  "narracao": "A fala principal do personagem, locução da cena ou texto de tela (curto).",
+  "cenas": [
+    {
+      "cena": 1,
+      "prompt_visual": "PROMPT DA CENA 1 EM INGLÊS PARA O GROK GERAR. Descreva personagens, ambiente, iluminação (cinematic 4k vertical format 9:16) e a ANIMAÇÃO.",
+      "narracao": "A fala principal do personagem da cena 1."
+    },
+    {
+      "cena": 2,
+      "prompt_visual": "PROMPT DA CENA 2 EM INGLÊS PARA O GROK GERAR...",
+      "narracao": "A fala da cena 2."
+    },
+    {
+      "cena": 3,
+      "prompt_visual": "PROMPT DA CENA 3 EM INGLÊS PARA O GROK GERAR...",
+      "narracao": "A fala da cena 3."
+    }
+  ],
   "legenda_facebook": "Legenda curta que desperte curiosidade e termine com uma pergunta.",
   "comentario_fixado": "Frase curta que incentive as pessoas a comentar."
 }

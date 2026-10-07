@@ -282,10 +282,34 @@ def main():
         logger.error("Variável VIDEO_PATH não definida.")
         sys.exit(1)
 
-    input_path = Path(video_path_str)
-    if not input_path.exists():
-        logger.error(f"Arquivo de entrada não encontrado: {input_path}")
+    input_paths = [Path(p.strip()) for p in video_path_str.split(",") if p.strip()]
+    
+    if not input_paths:
+        logger.error("Nenhum arquivo de entrada fornecido.")
         sys.exit(1)
+        
+    for p in input_paths:
+        if not p.exists():
+            logger.error(f"Arquivo de entrada não encontrado: {p}")
+            sys.exit(1)
+
+    # Se há mais de um vídeo, concatena usando ffmpeg concat demuxer
+    if len(input_paths) > 1:
+        logger.info(f"Concatenando {len(input_paths)} vídeos...")
+        concat_file = input_paths[0].parent / "concat.txt"
+        with open(concat_file, "w", encoding="utf-8") as f:
+            for p in input_paths:
+                f.write(f"file '{p.absolute().as_posix()}'\n")
+        
+        concat_output = input_paths[0].parent / f"concatenated_{input_paths[0].name}"
+        subprocess.run(
+            ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(concat_file), "-c", "copy", str(concat_output)],
+            check=True
+        )
+        logger.info(f"Vídeos concatenados em: {concat_output}")
+        input_path = concat_output
+    else:
+        input_path = input_paths[0]
 
     if not check_ffmpeg():
         sys.exit(1)

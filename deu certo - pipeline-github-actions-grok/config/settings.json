@@ -1,0 +1,54 @@
+{
+  "video": {
+    "target_duration_seconds": 15,
+    "format": "mp4",
+    "resolution": "720p",
+    "aspect_ratio": "9:16",
+    "orientation": "vertical",
+    "fps": 30,
+    "codec_video": "libx264",
+    "codec_audio": "aac",
+    "audio_bitrate": "128k",
+    "video_bitrate": "2000k",
+    "max_file_size_mb": 50
+  },
+  "audio": {
+    "normalize": true,
+    "target_loudness_lufs": -16,
+    "true_peak_dbtp": -1.5,
+    "loudness_range_lra": 11
+  },
+  "generation": {
+    "service": "grok",
+    "url": "https://grok.com/imagine",
+    "timeout_seconds": 600,
+    "poll_interval_seconds": 15,
+    "max_retries": 3,
+    "retry_delay_seconds": 30,
+    "screenshot_on_error": true,
+    "headless": true
+  },
+  "script": {
+    "max_length_chars": 500,
+    "min_length_chars": 50,
+    "validate_json": true
+  },
+  "telegram": {
+    "parse_mode": "HTML",
+    "disable_notification": false,
+    "send_caption": true
+  },
+  "openrouter": {
+    "base_url": "https://openrouter.ai/api/v1",
+    "timeout_seconds": 60,
+    "max_retries": 3,
+    "retry_delay_seconds": 10
+  },
+  "output": {
+    "scripts_dir": "output/scripts",
+    "videos_dir": "output/videos",
+    "processed_dir": "output/processed",
+    "logs_dir": "output/logs",
+    "screenshots_dir": "output/screenshots"
+  }
+}

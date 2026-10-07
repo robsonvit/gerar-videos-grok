@@ -1,0 +1,328 @@
+name: 🎬 Video Pipeline - Gerar Vídeo com Grok
+
+on:
+  # Execução manual com parâmetros opcionais
+  workflow_dispatch:
+    inputs:
+      custom_prompt:
+        description: "Prompt visual personalizado (opcional - deixe vazio para usar o master_prompt.txt)"
+        required: false
+        default: ""
+      titulo:
+        description: "Título do vídeo (opcional)"
+        required: false
+        default: ""
+      notify_telegram:
+        description: "Enviar resultado para Telegram?"
+        required: false
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
+
+  # Execução agendada (descomentado para ativar)
+  # schedule:
+  #   - cron: "0 9 * * 1,3,5"  # Segunda, Quarta e Sexta às 09h UTC
+
+# Evita execuções simultâneas do mesmo workflow
+concurrency:
+  group: video-pipeline
+  cancel-in-progress: false
+
+jobs:
+  # ─────────────────────────────────────────────
+  # ETAPA 1: Gerar Roteiro via OpenRouter
+  # ─────────────────────────────────────────────
+  generate-script:
+    name: 📝 Gerar Roteiro
+    runs-on: ubuntu-latest
+    outputs:
+      script_path: ${{ steps.gen.outputs.script_path }}
+      script_title: ${{ steps.gen.outputs.script_title }}
+      prompt_visual: ${{ steps.gen.outputs.prompt_visual }}
+
+    steps:
+      - name: ⬇️ Checkout do repositório
+        uses: actions/checkout@v4
+
+      - name: 🐍 Configurar Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: 📦 Instalar dependências
+        run: pip install requests
+
+      - name: 📁 Criar diretórios de saída
+        run: |
+          mkdir -p output/scripts output/videos output/processed output/logs output/screenshots
+
+      - name: 📝 Gerar roteiro via OpenRouter
+        id: gen
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          CUSTOM_PROMPT: ${{ github.event.inputs.custom_prompt }}
+          CUSTOM_TITULO: ${{ github.event.inputs.titulo }}
+        run: |
+          python scripts/generate_script.py
+        timeout-minutes: 10
+
+      - name: ✅ Verificar roteiro gerado
+        run: |
+          SCRIPT_FILE=$(find output/scripts -name "*.json" -newer output/scripts -type f 2>/dev/null | head -1)
+          if [ -z "$SCRIPT_FILE" ]; then
+            SCRIPT_FILE=$(ls -t output/scripts/*.json 2>/dev/null | head -1)
+          fi
+          if [ -z "$SCRIPT_FILE" ]; then
+            echo "❌ Nenhum arquivo de roteiro encontrado!"
+            exit 1
+          fi
+          echo "✅ Roteiro encontrado: $SCRIPT_FILE"
+          cat "$SCRIPT_FILE"
+
+      - name: 📤 Salvar roteiro como artefato
+        uses: actions/upload-artifact@v4
+        with:
+          name: roteiro-${{ github.run_number }}
+          path: output/scripts/
+          retention-days: 30
+
+  # ─────────────────────────────────────────────
+  # ETAPA 2: Gerar Vídeo no Grok
+  # ─────────────────────────────────────────────
+  generate-video:
+    name: 🎥 Gerar Vídeo no Grok
+    runs-on: ubuntu-latest
+    needs: generate-script
+    outputs:
+      video_path: ${{ steps.gen_video.outputs.video_path }}
+      video_filename: ${{ steps.gen_video.outputs.video_filename }}
+
+    steps:
+      - name: ⬇️ Checkout do repositório
+        uses: actions/checkout@v4
+
+      - name: 🐍 Configurar Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: 📦 Instalar dependências Python
+        run: pip install playwright requests
+
+      - name: 🌐 Instalar navegador Chromium
+        run: playwright install chromium --with-deps
+
+      - name: 📁 Criar diretórios de saída
+        run: |
+          mkdir -p output/videos output/screenshots output/logs
+
+      - name: ⬇️ Baixar roteiro do artefato anterior
+        uses: actions/download-artifact@v4
+        with:
+          name: roteiro-${{ github.run_number }}
+          path: output/scripts/
+
+      - name: 🎥 Gerar vídeo no Grok Aurora
+        id: gen_video
+        env:
+          GROK_COOKIES: ${{ secrets.GROK_COOKIES }}
+          SCRIPT_PATH: ${{ needs.generate-script.outputs.script_path }}
+          PROMPT_VISUAL: ${{ needs.generate-script.outputs.prompt_visual }}
+        run: |
+          python scripts/generate_video.py
+        timeout-minutes: 30
+
+      - name: ✅ Verificar vídeo gerado
+        run: |
+          VIDEO_FILE=$(ls -t output/videos/*.mp4 2>/dev/null | head -1)
+          if [ -z "$VIDEO_FILE" ]; then
+            echo "❌ Nenhum arquivo de vídeo encontrado!"
+            ls -la output/videos/ || echo "Diretório vazio"
+            exit 1
+          fi
+          SIZE=$(du -sh "$VIDEO_FILE" | cut -f1)
+          echo "✅ Vídeo encontrado: $VIDEO_FILE (${SIZE})"
+
+      - name: 📤 Salvar vídeo como artefato
+        uses: actions/upload-artifact@v4
+        with:
+          name: video-raw-${{ github.run_number }}
+          path: output/videos/
+          retention-days: 7
+
+      - name: 📤 Salvar screenshots de diagnóstico (se houver)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: screenshots-${{ github.run_number }}
+          path: output/screenshots/
+          retention-days: 7
+          if-no-files-found: ignore
+
+  # ─────────────────────────────────────────────
+  # ETAPA 3: Processar Vídeo com FFmpeg
+  # ─────────────────────────────────────────────
+  process-video:
+    name: ⚙️ Processar Vídeo (FFmpeg)
+    runs-on: ubuntu-latest
+    needs: generate-video
+    outputs:
+      processed_path: ${{ steps.proc.outputs.processed_path }}
+      processed_filename: ${{ steps.proc.outputs.processed_filename }}
+
+    steps:
+      - name: ⬇️ Checkout do repositório
+        uses: actions/checkout@v4
+
+      - name: 🐍 Configurar Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: 📦 Instalar FFmpeg
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y ffmpeg
+          ffmpeg -version | head -1
+
+      - name: 📦 Instalar dependências Python
+        run: pip install requests
+
+      - name: 📁 Criar diretórios de saída
+        run: mkdir -p output/videos output/processed output/logs
+
+      - name: ⬇️ Baixar vídeo raw do artefato anterior
+        uses: actions/download-artifact@v4
+        with:
+          name: video-raw-${{ github.run_number }}
+          path: output/videos/
+
+      - name: ⬙️ Processar vídeo com FFmpeg
+        id: proc
+        env:
+          VIDEO_PATH: ${{ needs.generate-video.outputs.video_path }}
+        run: |
+          # Se VIDEO_PATH não estiver disponível, encontra o arquivo automaticamente
+          if [ -z "$VIDEO_PATH" ] || [ ! -f "$VIDEO_PATH" ]; then
+            VIDEO_FILE=$(ls -t output/videos/*.mp4 2>/dev/null | head -1)
+            if [ -z "$VIDEO_FILE" ]; then
+              echo "❌ Nenhum vídeo encontrado para processar!"
+              exit 1
+            fi
+            export VIDEO_PATH="$VIDEO_FILE"
+            echo "Usando vídeo encontrado: $VIDEO_PATH"
+          fi
+          python scripts/process_video.py
+        timeout-minutes: 10
+
+      - name: ✅ Verificar vídeo processado
+        run: |
+          PROC_FILE=$(ls -t output/processed/*.mp4 2>/dev/null | head -1)
+          if [ -z "$PROC_FILE" ]; then
+            echo "❌ Nenhum vídeo processado encontrado!"
+            exit 1
+          fi
+          SIZE=$(du -sh "$PROC_FILE" | cut -f1)
+          DURATION=$(ffprobe -v quiet -show_entries format=duration -of csv=p=0 "$PROC_FILE" 2>/dev/null || echo "N/A")
+          echo "✅ Vídeo processado: $PROC_FILE"
+          echo "   Tamanho: ${SIZE}"
+          echo "   Duração: ${DURATION}s"
+
+      - name: 📤 Salvar vídeo processado como artefato
+        uses: actions/upload-artifact@v4
+        with:
+          name: video-processed-${{ github.run_number }}
+          path: output/processed/
+          retention-days: 30
+
+  # ─────────────────────────────────────────────
+  # ETAPA 4: Enviar para Telegram
+  # ─────────────────────────────────────────────
+  send-telegram:
+    name: 📱 Enviar para Telegram
+    runs-on: ubuntu-latest
+    needs: [generate-script, process-video]
+    if: ${{ github.event.inputs.notify_telegram != 'false' }}
+
+    steps:
+      - name: ⬇️ Checkout do repositório
+        uses: actions/checkout@v4
+
+      - name: 🐍 Configurar Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: 📦 Instalar dependências Python
+        run: pip install requests
+
+      - name: 📁 Criar diretórios
+        run: mkdir -p output/scripts output/processed output/logs
+
+      - name: ⬇️ Baixar roteiro
+        uses: actions/download-artifact@v4
+        with:
+          name: roteiro-${{ github.run_number }}
+          path: output/scripts/
+
+      - name: ⬇️ Baixar vídeo processado
+        uses: actions/download-artifact@v4
+        with:
+          name: video-processed-${{ github.run_number }}
+          path: output/processed/
+
+      - name: 📱 Enviar vídeo para Telegram
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          PROCESSED_PATH: ${{ needs.process-video.outputs.processed_path }}
+          SCRIPT_PATH: ${{ needs.generate-script.outputs.script_path }}
+        run: |
+          # Se PROCESSED_PATH não estiver disponível, encontra automaticamente
+          if [ -z "$PROCESSED_PATH" ] || [ ! -f "$PROCESSED_PATH" ]; then
+            PROC_FILE=$(ls -t output/processed/*.mp4 2>/dev/null | head -1)
+            if [ -z "$PROC_FILE" ]; then
+              echo "❌ Nenhum vídeo processado encontrado para enviar!"
+              exit 1
+            fi
+            export PROCESSED_PATH="$PROC_FILE"
+          fi
+
+          SCRIPT_FILE=$(ls -t output/scripts/*.json 2>/dev/null | head -1)
+          if [ -n "$SCRIPT_FILE" ]; then
+            export SCRIPT_PATH="$SCRIPT_FILE"
+          fi
+
+          python scripts/send_telegram.py
+        timeout-minutes: 10
+
+  # ─────────────────────────────────────────────
+  # ETAPA FINAL: Resumo do Pipeline
+  # ─────────────────────────────────────────────
+  pipeline-summary:
+    name: 📊 Resumo do Pipeline
+    runs-on: ubuntu-latest
+    needs: [generate-script, generate-video, process-video, send-telegram]
+    if: always()
+
+    steps:
+      - name: 📊 Resumo final
+        run: |
+          echo "## 🎬 Pipeline de Vídeo - Resumo" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Etapa | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| 📝 Gerar Roteiro | ${{ needs.generate-script.result == 'success' && '✅ Sucesso' || '❌ Falhou' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🎥 Gerar Vídeo | ${{ needs.generate-video.result == 'success' && '✅ Sucesso' || needs.generate-video.result == 'skipped' && '⏭️ Pulado' || '❌ Falhou' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| ⚙️ Processar FFmpeg | ${{ needs.process-video.result == 'success' && '✅ Sucesso' || needs.process-video.result == 'skipped' && '⏭️ Pulado' || '❌ Falhou' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| 📱 Enviar Telegram | ${{ needs.send-telegram.result == 'success' && '✅ Sucesso' || needs.send-telegram.result == 'skipped' && '⏭️ Pulado' || '❌ Falhou' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Execução:** #${{ github.run_number }} | **Trigger:** ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Título:** ${{ needs.generate-script.outputs.script_title }}" >> $GITHUB_STEP_SUMMARY
+

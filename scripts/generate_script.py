@@ -147,24 +147,30 @@ def validate_script(content: str, settings: dict) -> dict | None:
             return None
 
         # Valida campos obrigatórios
-        required_fields = ["titulo", "prompt_visual", "narracao"]
+        required_fields = ["titulo", "cenas"]
         for field in required_fields:
             if field not in script_data:
                 logger.error(f"Campo obrigatório ausente no roteiro: {field}")
                 return None
 
-        prompt_visual = script_data.get("prompt_visual", "")
-        if len(prompt_visual) < min_len:
-            logger.error(
-                f"Prompt visual muito curto: {len(prompt_visual)} chars (mínimo: {min_len})"
-            )
+        cenas = script_data.get("cenas", [])
+        if not isinstance(cenas, list) or len(cenas) == 0:
+            logger.error("Campo 'cenas' deve ser uma lista com pelo menos 1 cena.")
             return None
 
-        if len(prompt_visual) > max_len:
-            logger.warning(
-                f"Prompt visual muito longo ({len(prompt_visual)} chars), truncando para {max_len}"
-            )
-            script_data["prompt_visual"] = prompt_visual[:max_len]
+        for idx, cena in enumerate(cenas):
+            prompt_visual = cena.get("prompt_visual", "")
+            if len(prompt_visual) < min_len:
+                logger.error(
+                    f"Prompt visual da cena {idx+1} muito curto: {len(prompt_visual)} chars (mínimo: {min_len})"
+                )
+                return None
+
+            if len(prompt_visual) > max_len:
+                logger.warning(
+                    f"Prompt visual da cena {idx+1} muito longo ({len(prompt_visual)} chars), truncando para {max_len}"
+                )
+                cena["prompt_visual"] = prompt_visual[:max_len]
 
         logger.info(f"Roteiro validado: '{script_data.get('titulo', 'Sem título')}'")
         return script_data
@@ -275,10 +281,6 @@ def main():
         with open(github_output, "a") as f:
             f.write(f"script_path={script_path}\n")
             f.write(f"script_title={script_data.get('titulo', 'Video')}\n")
-            prompt_visual = script_data.get("prompt_visual", "")
-            # Escapa quebras de linha para o GITHUB_OUTPUT
-            prompt_visual_escaped = prompt_visual.replace("\n", " ").replace("\r", "")
-            f.write(f"prompt_visual={prompt_visual_escaped}\n")
 
     logger.info("=== ROTEIRO GERADO COM SUCESSO ===")
     logger.info(f"Título: {script_data.get('titulo', 'N/A')}")
