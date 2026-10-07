@@ -152,9 +152,15 @@ def download_video(page, video_src: str, output_path: Path) -> bool:
         elif video_src.startswith("http"):
             # Download direto para URLs HTTP
             logger.info(f"Fazendo download direto de: {video_src[:80]}...")
-            urllib.request.urlretrieve(video_src, str(output_path))
-            logger.info(f"Vídeo salvo em: {output_path}")
-            return True
+            response = page.request.get(video_src)
+            if response.ok:
+                with open(output_path, "wb") as f:
+                    f.write(response.body())
+                logger.info(f"Vídeo salvo em: {output_path}")
+                return True
+            else:
+                logger.error(f"Erro ao baixar vídeo. Status: {response.status} - {response.status_text}")
+                return False
 
         else:
             logger.error(f"Tipo de URL não suportado: {video_src[:50]}")
