@@ -265,24 +265,31 @@ def generate_video_on_grok(
                         logger.info("Modo Vídeo selecionado")
                         time.sleep(0.5)
                         
-                        # Tenta selecionar 15s de duração via JS robusto
+                        # Seleciona 15s usando eventos nativos do Playwright
                         try:
-                            page.evaluate("""
-                                () => {
-                                    let btn5s = Array.from(document.querySelectorAll('*')).reverse().find(el => el.textContent.trim() === '5s' && (el.tagName === 'BUTTON' || el.getAttribute('role') === 'button' || el.classList.length > 0));
-                                    if (btn5s) {
-                                        btn5s.click();
-                                        setTimeout(() => {
-                                            let btn15s = Array.from(document.querySelectorAll('*')).reverse().find(el => el.textContent.trim() === '15s' && (el.tagName === 'BUTTON' || el.getAttribute('role') === 'menuitem' || el.classList.length > 0));
-                                            if (btn15s) btn15s.click();
-                                        }, 800);
-                                    }
-                                }
-                            """)
-                            logger.info("Tentativa de seleção de 15s via JS executada.")
-                            time.sleep(1.5)
+                            # 1. Tenta achar o botão de 5s para abrir o menu
+                            btn_5s = page.locator("text='5s'").last
+                            if btn_5s.is_visible(timeout=1000):
+                                btn_5s.click(force=True)
+                                logger.info("Botão 5s clicado. Aguardando menu...")
+                                time.sleep(1)
+                                
+                                # 2. Tenta achar a opção 15s no menu aberto
+                                btn_15s = page.locator("text='15s'").last
+                                if btn_15s.is_visible(timeout=1000):
+                                    btn_15s.click(force=True)
+                                    logger.info("Opção 15s selecionada com sucesso!")
+                                else:
+                                    logger.warning("Opção 15s não visível no menu.")
+                            else:
+                                # Se não achou 5s, talvez já esteja em 15s
+                                btn_15s_check = page.locator("text='15s'").last
+                                if btn_15s_check.is_visible(timeout=1000):
+                                    logger.info("Botão 15s já estava visível (possivelmente selecionado).")
+                                else:
+                                    logger.warning("Não encontrou nem 5s nem 15s na tela.")
                         except Exception as inner_e:
-                            logger.warning(f"Não foi possível selecionar duração de 15s via JS: {inner_e}")
+                            logger.warning(f"Erro ao selecionar duração de 15s: {inner_e}")
                             
                 except Exception as e:
                     logger.warning(f"Não foi possível selecionar modo vídeo: {e}")
