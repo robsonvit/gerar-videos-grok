@@ -13,12 +13,17 @@ Gere AGORA MESMO, de forma autônoma e aleatória, uma lista com EXATAMENTE 15 p
 2.  **Meio (3-10s):** O preparo ágil (misturar, bater ou montar).
 3.  **Final (10-15s):** O resultado final pronto, saindo do forno ou da panela, cortado ou servido de forma apetitosa.
 
-**ESTRUTURA OBRIGATÓRIA DA NARRAÇÃO (EM PT-BR):**
-Cada prompt deve vir acompanhado obrigatoriamente do texto da narração que inicia rigorosamente com o padrão:
-*   *"Você sabia que se misturar [X gramas/ml/porções de ingrediente 1], [X gramas/ml/porções de ingrediente 2]... você vai ter um [Nome do Prato] delicioso?"*
+**ESTRUTURA DE SAÍDA OBRIGATÓRIA PARA CADA VÍDEO:**
+Para CADA UM dos 15 vídeos, você deve gerar a resposta utilizando rigorosamente o seguinte template (não adicione texto extra):
 
-**REGRAS DE FORMATAÇÃO DA SAÍDA (CRÍTICAS):**
-- Retorne EXATAMENTE os 15 prompts estruturados.
+**PROMPT VISUAL (EM INGLÊS):**
+[Aqui você escreve o prompt do Grok Imagine descrevendo os 15 segundos da receita, o gancho inicial, o POV e a textura hiperrealista 8k, TUDO EM INGLÊS]
+
+**NARRAÇÃO (EM PT-BR):**
+Você sabia que se misturar [X gramas/ml/porções de ingrediente 1], [X gramas/ml/porções de ingrediente 2]... você vai ter um [Nome do Prato] delicioso?
+
+**REGRAS FINAIS (CRÍTICAS):**
+- Retorne EXATAMENTE os 15 blocos estruturados conforme o template acima.
 - O prompt visual destinado à IA de vídeo deve ser gerado estritamente em **INGLÊS**.
-- A narração fixa deve ser gerada em **PORTUGUÊS DO BRASIL**.
-- NÃO utilize numeração excessiva ou explicações fora do formato. Separe cada bloco por EXATAMENTE 1 linha em branco.
+- A narração fixa deve ser gerada estritamente em **PORTUGUÊS DO BRASIL** e obrigatoriamente começar com a frase "Você sabia que se misturar...".
+- Separe cada bloco (vídeo) por EXATAMENTE 1 linha em branco. NUNCA crie textos introdutórios ou de conclusão.
