@@ -124,11 +124,11 @@ def parse_structured_response(content: str) -> dict | None:
 
     def extract_section(text: str, section: str) -> str:
         """Extrai o conteúdo de uma seção do texto estruturado."""
-        # Tenta com ### SECTION ou ** SECTION ** ou apenas SECTION
+        # Suporta com ou sem `:` no final do cabeçalho
         patterns = [
-            rf"###\s*{re.escape(section)}\s*\n(.*?)(?=###|\Z)",
-            rf"\*\*{re.escape(section)}\*\*\s*\n(.*?)(?=\*\*|\Z)",
-            rf"{re.escape(section)}\s*\n(.*?)(?=\n[A-Z#*]|\Z)",
+            rf"###\s*{re.escape(section)}:?\s*\n(.*?)(?=###|\Z)",
+            rf"\*\*{re.escape(section)}\*\*:?\s*\n(.*?)(?=\*\*|\Z)",
+            rf"{re.escape(section)}:?\s*\n(.*?)(?=\n[A-Z0-9]+[^a-z]*:|\Z)",
         ]
         for pattern in patterns:
             match = re.search(pattern, text, re.IGNORECASE | re.DOTALL)
