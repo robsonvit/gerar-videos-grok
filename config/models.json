@@ -1,40 +1,64 @@
 {
-  "comment": "Lista de modelos da OpenRouter em ordem de prioridade. Os modelos gratuitos ou de baixo custo são priorizados.",
+  "comment": "Lista de modelos gratuitos do OpenRouter em ordem de prioridade. Todos os modelos são 100% gratuitos ($0 input/$0 output). Nenhum modelo pago incluído.",
   "models": [
     {
-      "id": "meta-llama/llama-3.3-70b-instruct:free",
-      "name": "Llama 3.3 70B Instruct (Free)",
-      "max_tokens": 1024,
+      "id": "nvidia/nemotron-3-ultra-550b-a55b:free",
+      "name": "NVIDIA: Nemotron 3 Ultra (Free)",
+      "max_tokens": 2048,
       "temperature": 0.8
     },
     {
-      "id": "mistralai/mistral-7b-instruct:free",
-      "name": "Mistral 7B Instruct (Free)",
-      "max_tokens": 1024,
+      "id": "nvidia/nemotron-3-super-120b-a12b:free",
+      "name": "NVIDIA: Nemotron 3 Super (Free)",
+      "max_tokens": 2048,
       "temperature": 0.8
     },
     {
-      "id": "google/gemma-2-9b-it:free",
-      "name": "Gemma 2 9B IT (Free)",
-      "max_tokens": 1024,
+      "id": "nvidia/nemotron-3.5-lightning:free",
+      "name": "NVIDIA: Nemotron 3.5 Lightning (Free)",
+      "max_tokens": 2048,
       "temperature": 0.8
     },
     {
-      "id": "qwen/qwen-2.5-72b-instruct:free",
-      "name": "Qwen 2.5 72B Instruct (Free)",
-      "max_tokens": 1024,
+      "id": "poolside/laguna-s-2.1:free",
+      "name": "Poolside: Laguna S 2.1 (Free)",
+      "max_tokens": 2048,
       "temperature": 0.8
     },
     {
-      "id": "deepseek/deepseek-chat:free",
-      "name": "DeepSeek Chat (Free)",
-      "max_tokens": 1024,
+      "id": "poolside/laguna-xs-2.1:free",
+      "name": "Poolside: Laguna XS 2.1 (Free)",
+      "max_tokens": 2048,
       "temperature": 0.8
     },
     {
-      "id": "openai/gpt-4o-mini",
-      "name": "GPT-4o Mini (Fallback pago de baixo custo)",
-      "max_tokens": 1024,
+      "id": "google/gemma-4-31b-it:free",
+      "name": "Google: Gemma 4 31B (Free)",
+      "max_tokens": 2048,
+      "temperature": 0.8
+    },
+    {
+      "id": "google/gemma-4-26b-a4b-it:free",
+      "name": "Google: Gemma 4 26B A4B (Free)",
+      "max_tokens": 2048,
+      "temperature": 0.8
+    },
+    {
+      "id": "cohere/north-mini-code:free",
+      "name": "Cohere: North Mini Code (Free)",
+      "max_tokens": 2048,
+      "temperature": 0.8
+    },
+    {
+      "id": "thinkingmachines/inkling:free",
+      "name": "Thinking Machines: Inkling (Free)",
+      "max_tokens": 2048,
+      "temperature": 0.8
+    },
+    {
+      "id": "thinkingmachines/inkling-small:free",
+      "name": "Thinking Machines: Inkling Small (Free)",
+      "max_tokens": 2048,
       "temperature": 0.8
     }
   ]
