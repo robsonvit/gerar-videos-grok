@@ -22,8 +22,7 @@ logger = logging.getLogger(__name__)
 def generate_caption(narracao: str, openrouter_key: str) -> str:
     """Usa o OpenRouter para gerar uma legenda viral e otimizada para SEO."""
     if not openrouter_key:
-        # Se não tiver a chave, faz um fallback
-        return f"{narracao}\n\n#Receita #ReceitaFacil #CulinariaBrasileira #DicaDeCozinha #ComidaBoa"
+        return f"{narracao}\n\n#receita #receitafacil #culinariabrasileira #dicadecozinha #comidaboa"
     
     logger.info("Gerando legenda otimizada para SEO via OpenRouter...")
     url = "https://openrouter.ai/api/v1/chat/completions"
@@ -32,15 +31,17 @@ def generate_caption(narracao: str, openrouter_key: str) -> str:
         "Content-Type": "application/json"
     }
     prompt = (
-        f"Transforme o texto abaixo em uma legenda viral e engajadora para uma página de receitas no Facebook chamada 'Rainha da Shopee'. "
-        f"Adicione emojis, resuma o modo de preparo de forma atrativa e inclua exatamente 5 hashtags altamente otimizadas para SEO.\n\n"
-        f"Texto base: {narracao}"
+        f"Crie uma legenda viral e engajadora para uma página do Facebook chamada 'Rainha da Shopee', baseada EXATAMENTE na receita abaixo. "
+        f"Descreva a receita atual de forma atrativa, com emojis, e no final adicione exatamente 5 hashtags altamente otimizadas para SEO, relacionadas com essa receita específica. "
+        f"As hashtags DEVEM estar todas em letras minúsculas.\n\n"
+        f"Receita atual (Texto base):\n{narracao}"
     )
     
     data = {
         "model": "nvidia/nemotron-3-ultra-550b-a55b:free",  # Usando o modelo gratuito configurado no projeto
+        "temperature": 0.8,
         "messages": [
-            {"role": "system", "content": "Você é um Social Media e Copywriter especialista em receitas virais para o Facebook."},
+            {"role": "system", "content": "Você é um Social Media especialista em receitas virais. Baseie-se SEMPRE na receita fornecida, sem repetir legendas antigas."},
             {"role": "user", "content": prompt}
         ]
     }
