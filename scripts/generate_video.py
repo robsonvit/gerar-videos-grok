@@ -404,8 +404,15 @@ def main():
     # Obtém o prompt visual
     if script_path:
         script_data = load_script(script_path)
-        prompt = script_data.get("prompt_visual", prompt_visual)
+        prompt_base = script_data.get("prompt_visual", prompt_visual)
+        narracao = script_data.get("narracao", "")
         titulo = script_data.get("titulo", "video")
+        
+        # Junta a narração ao prompt visual para o Grok falar o texto exato
+        if narracao:
+            prompt = f"{prompt_base}\n\nAudio: AI voice speaking in Brazilian Portuguese saying EXACTLY this: '{narracao}'"
+        else:
+            prompt = prompt_base
     else:
         prompt = prompt_visual
         titulo = "video"

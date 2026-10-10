@@ -17,13 +17,13 @@ Gere AGORA MESMO, de forma autônoma e aleatória, uma lista com EXATAMENTE 15 p
 Para CADA UM dos 15 vídeos, você deve gerar a resposta utilizando rigorosamente o seguinte template (não adicione texto extra):
 
 **PROMPT VISUAL (EM INGLÊS):**
-[Aqui você escreve o prompt do Grok Imagine descrevendo os 15 segundos da receita, o gancho inicial, o POV e a textura hiperrealista 8k, TUDO EM INGLÊS]
+[Aqui você escreve o prompt detalhado para o Grok Imagine. OBRIGATORIAMENTE, este texto deve descrever a estética POV de mãos preparando os ingredientes (0-10s) e OBRIGATORIAMENTE terminar com o prato 100% pronto, finalizado, apetitoso e sendo servido (10-15s). ALÉM DISSO, adicione exatamente o seguinte comando de áudio no final deste texto em inglês: "Audio: AI voice speaking in Brazilian Portuguese (PT-BR) saying the recipe ingredients and steps clearly."]
 
 **NARRAÇÃO (EM PT-BR):**
 Você sabia que se misturar [X gramas/ml/porções de ingrediente 1], [X gramas/ml/porções de ingrediente 2]... você vai ter um [Nome do Prato] delicioso?
 
 **REGRAS FINAIS (CRÍTICAS):**
 - Retorne EXATAMENTE os 15 blocos estruturados conforme o template acima.
-- O prompt visual destinado à IA de vídeo deve ser gerado estritamente em **INGLÊS**.
+- O prompt visual deve ser gerado estritamente em **INGLÊS** e DEVE conter a instrução de mostrar o prato final e a instrução de áudio em PT-BR.
 - A narração fixa deve ser gerada estritamente em **PORTUGUÊS DO BRASIL** e obrigatoriamente começar com a frase "Você sabia que se misturar...".
 - Separe cada bloco (vídeo) por EXATAMENTE 1 linha em branco. NUNCA crie textos introdutórios ou de conclusão.
