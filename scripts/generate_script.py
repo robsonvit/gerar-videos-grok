@@ -139,8 +139,8 @@ def parse_structured_response(content: str) -> dict | None:
     conceito = extract_section(content, "CONCEITO")
     
     # Suporta o formato antigo e o novo
-    gancho = extract_section(content, "NARRAÇÃO") or extract_section(content, "NARRAÇÃO (EM PT-BR)") or extract_section(content, "GANCHO")
-    prompt_grok = extract_section(content, "PROMPT VISUAL") or extract_section(content, "PROMPT VISUAL (EM INGLÊS)") or extract_section(content, "PROMPT PARA GROK IMAGINE")
+    gancho = extract_section(content, "NARRAÇÃO (PORTUGUÊS BRASILEIRO)") or extract_section(content, "NARRAÇÃO") or extract_section(content, "GANCHO")
+    prompt_grok = extract_section(content, "PROMPT VISUAL (ENGLISH)") or extract_section(content, "PROMPT VISUAL") or extract_section(content, "PROMPT PARA GROK IMAGINE")
     
     legenda = extract_section(content, "LEGENDA PARA FACEBOOK")
     hashtags = extract_section(content, "HASHTAGS")
