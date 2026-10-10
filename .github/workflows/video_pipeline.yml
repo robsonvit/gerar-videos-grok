@@ -303,12 +303,72 @@ jobs:
         timeout-minutes: 10
 
   # ─────────────────────────────────────────────
+  # ETAPA 5: Enviar para Facebook
+  # ─────────────────────────────────────────────
+  send-facebook:
+    name: 📱 Enviar para Facebook
+    runs-on: ubuntu-latest
+    needs: [generate-script, process-video]
+
+    steps:
+      - name: ⬇️ Checkout do repositório
+        uses: actions/checkout@v4
+
+      - name: 🐍 Configurar Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: 📦 Instalar dependências Python
+        run: pip install requests
+
+      - name: 📁 Criar diretórios
+        run: mkdir -p output/scripts output/processed output/logs
+
+      - name: ⬇️ Baixar roteiro
+        uses: actions/download-artifact@v4
+        with:
+          name: roteiro-${{ github.run_number }}
+          path: output/scripts/
+
+      - name: ⬇️ Baixar vídeo processado
+        uses: actions/download-artifact@v4
+        with:
+          name: video-processed-${{ github.run_number }}
+          path: output/processed/
+
+      - name: 📱 Enviar vídeo para Facebook
+        env:
+          FACEBOOK_PAGE_TOKEN: ${{ secrets.FACEBOOK_PAGE_TOKEN }}
+          FACEBOOK_PAGE_ID: ${{ secrets.FACEBOOK_PAGE_ID }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+        run: |
+          # Se PROCESSED_PATH não estiver disponível, encontra automaticamente
+          if [ -z "$PROCESSED_PATH" ] || [ ! -f "$PROCESSED_PATH" ]; then
+            PROC_FILE=$(ls -t output/processed/*.mp4 2>/dev/null | head -1)
+            if [ -z "$PROC_FILE" ]; then
+              echo "❌ Nenhum vídeo processado encontrado para enviar!"
+              exit 1
+            fi
+            export PROCESSED_PATH="$PROC_FILE"
+          fi
+
+          SCRIPT_FILE=$(ls -t output/scripts/*.json 2>/dev/null | head -1)
+          if [ -n "$SCRIPT_FILE" ]; then
+            export SCRIPT_PATH="$SCRIPT_FILE"
+          fi
+
+          python scripts/send_facebook.py
+        timeout-minutes: 10
+
+  # ─────────────────────────────────────────────
   # ETAPA FINAL: Resumo do Pipeline
   # ─────────────────────────────────────────────
   pipeline-summary:
     name: 📊 Resumo do Pipeline
     runs-on: ubuntu-latest
-    needs: [generate-script, generate-video, process-video, send-telegram]
+    needs: [generate-script, generate-video, process-video, send-telegram, send-facebook]
     if: always()
 
     steps:
@@ -322,6 +382,7 @@ jobs:
           echo "| 🎥 Gerar Vídeo | ${{ needs.generate-video.result == 'success' && '✅ Sucesso' || needs.generate-video.result == 'skipped' && '⏭️ Pulado' || '❌ Falhou' }} |" >> $GITHUB_STEP_SUMMARY
           echo "| ⚙️ Processar FFmpeg | ${{ needs.process-video.result == 'success' && '✅ Sucesso' || needs.process-video.result == 'skipped' && '⏭️ Pulado' || '❌ Falhou' }} |" >> $GITHUB_STEP_SUMMARY
           echo "| 📱 Enviar Telegram | ${{ needs.send-telegram.result == 'success' && '✅ Sucesso' || needs.send-telegram.result == 'skipped' && '⏭️ Pulado' || '❌ Falhou' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| 📱 Enviar Facebook | ${{ needs.send-facebook.result == 'success' && '✅ Sucesso' || needs.send-facebook.result == 'skipped' && '⏭️ Pulado' || '❌ Falhou' }} |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Execução:** #${{ github.run_number }} | **Trigger:** ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
           echo "**Título:** ${{ needs.generate-script.outputs.script_title }}" >> $GITHUB_STEP_SUMMARY
