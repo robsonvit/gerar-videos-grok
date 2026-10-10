@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import sys
+import html
 from datetime import datetime
 from pathlib import Path
 
@@ -50,10 +51,10 @@ def build_caption(script_data: dict, video_filename: str, settings: dict) -> str
     if not send_caption:
         return ""
 
-    titulo = script_data.get("titulo", "Vídeo Gerado")
-    narracao = script_data.get("narracao", "")
-    estilo = script_data.get("estilo", "")
-    model_used = script_data.get("_meta", {}).get("model_name", "OpenRouter")
+    titulo = html.escape(script_data.get("titulo", "Vídeo Gerado"))
+    narracao = html.escape(script_data.get("narracao", ""))
+    estilo = html.escape(script_data.get("estilo", ""))
+    model_used = html.escape(script_data.get("_meta", {}).get("model_name", "OpenRouter"))
     timestamp = datetime.now().strftime("%d/%m/%Y %H:%M")
 
     caption_lines = [
