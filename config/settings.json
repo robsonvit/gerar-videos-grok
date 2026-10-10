@@ -29,7 +29,7 @@
     "headless": true
   },
   "script": {
-    "max_length_chars": 500,
+    "max_length_chars": 2500,
     "min_length_chars": 50,
     "validate_json": true
   },

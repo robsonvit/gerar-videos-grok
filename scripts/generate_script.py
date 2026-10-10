@@ -115,60 +115,105 @@ def call_openrouter(
         return None
 
 
-def parse_structured_response(content: str) -> dict | None:
+def parse_structured_response(content: str, tema_sugerido: str = "") -> dict | None:
     """
-    Parseia a resposta estruturada do novo master prompt (seções de texto).
-    Extrai: CONCEITO, GANCHO, PROMPT PARA GROK IMAGINE, LEGENDA, HASHTAGS.
+    Parseia a resposta estruturada do master prompt.
+    Extrai blocos de PROMPT VISUAL (ENGLISH) e NARRAÇÃO (PORTUGUÊS BRASILEIRO).
+    Se houver múltiplos blocos, seleciona um bloco exclusivo com narração limpa.
     """
     import re
+    import random
 
-    def extract_section(text: str, section: str) -> str:
-        """Extrai o conteúdo de uma seção do texto estruturado."""
-        # Suporta com ou sem `:` no final do cabeçalho
-        patterns = [
-            rf"###\s*{re.escape(section)}:?\s*\n(.*?)(?=###|\Z)",
-            rf"\*\*{re.escape(section)}\*\*:?\s*\n(.*?)(?=\*\*|\Z)",
-            rf"{re.escape(section)}:?\s*\n(.*?)(?=\n[A-Z0-9]+[^a-z]*:|\Z)",
-        ]
-        for pattern in patterns:
-            match = re.search(pattern, text, re.IGNORECASE | re.DOTALL)
-            if match:
-                return match.group(1).strip()
-        return ""
-
-    conceito = extract_section(content, "CONCEITO")
+    # Procura por blocos completos: PROMPT VISUAL seguido de NARRAÇÃO
+    blocos = []
     
-    # Suporta o formato antigo e o novo
-    gancho = extract_section(content, "NARRAÇÃO (PORTUGUÊS BRASILEIRO)") or extract_section(content, "NARRAÇÃO") or extract_section(content, "GANCHO")
-    prompt_grok = extract_section(content, "PROMPT VISUAL (ENGLISH)") or extract_section(content, "PROMPT VISUAL") or extract_section(content, "PROMPT PARA GROK IMAGINE")
-    
-    legenda = extract_section(content, "LEGENDA PARA FACEBOOK")
-    hashtags = extract_section(content, "HASHTAGS")
+    # Divide por blocos de PROMPT VISUAL
+    partes = re.split(r'(?i)PROMPT\s+VISUAL(?:\s*\([^\)]*\))?\s*:\s*', content)
+    for p in partes:
+        if not p.strip():
+            continue
+        # Dentro de cada parte, procura pela NARRAÇÃO
+        match_narr = re.split(r'(?i)NARRAÇÃO(?:\s*\([^\)]*\))?\s*:\s*', p, maxsplit=1)
+        if len(match_narr) == 2:
+            prompt_vis = match_narr[0].strip()
+            # A narração vai até o próximo delimitador de bloco ou fim
+            narr_text = match_narr[1].strip()
+            # Limpa se houver início de outro bloco ou instrução
+            narr_text = re.split(r'(?i)(?:\n\s*PROMPT\s+VISUAL|\n\s*###|\n\s*\*\*PROMPT|\Z)', narr_text)[0].strip()
+            if prompt_vis and narr_text:
+                blocos.append((prompt_vis, narr_text))
 
-    # Se não achou seções estruturadas, usa o conteúdo completo como prompt
-    if not prompt_grok:
-        logger.warning("Seção 'PROMPT PARA GROK IMAGINE' não encontrada. Usando conteúdo completo como prompt.")
-        prompt_grok = content.strip()
+    if blocos:
+        # Escolhe aleatoriamente um dos blocos gerados para garantir variedade máxima
+        prompt_grok, gancho = random.choice(blocos)
+    else:
+        # Fallback genérico caso o formato venha ligeiramente diferente
+        m_vis = re.search(r'(?i)PROMPT\s+VISUAL[^\n:]*:\s*(.*?)(?=\n\s*NARRAÇÃO|\Z)', content, re.DOTALL)
+        prompt_grok = m_vis.group(1).strip() if m_vis else content.strip()
+        
+        m_narr = re.search(r'(?i)NARRAÇÃO[^\n:]*:\s*(.*?)(?=\n\s*PROMPT|\Z)', content, re.DOTALL)
+        gancho = m_narr.group(1).strip() if m_narr else "Vídeo gerado automaticamente"
 
-    if not conceito:
-        conceito = "Vídeo Viral Brasil"
+    # Tenta extrair o nome da receita da narração
+    # Padrão: 'vai fazer um(a) [delicioso(a)] [nome da receita], rápido...'
+    titulo = ""
+    match_titulo = re.search(r'vai\s+fazer\s+um[a]?\s+(?:delicios[oa]\s+)?([^,?.!]+)', gancho, re.IGNORECASE)
+    if match_titulo:
+        titulo = match_titulo.group(1).strip().title()
+    elif tema_sugerido:
+        titulo = tema_sugerido.title()
+    else:
+        titulo = "Receita Deliciosa"
+
+    logger.info(f"Receita identificada: '{titulo}'")
+    logger.info(f"Tamanho do prompt visual: {len(prompt_grok)} chars")
+    logger.info(f"Narração extraída ({len(gancho)} chars): {gancho[:120]}...")
 
     return {
-        "titulo": conceito,
+        "titulo": titulo,
         "prompt_visual": prompt_grok,
         "narracao": gancho,
-        "legenda": legenda,
-        "hashtags": hashtags,
-        "conceito": conceito,
+        "legenda": "",
+        "hashtags": "",
+        "conceito": titulo,
         "gancho": gancho,
     }
 
 
-def validate_script(content: str, settings: dict) -> dict | None:
+RECEITAS_VARIADAS = [
+    "Bolo de Cenoura com Cobertura de Chocolate Vulcão",
+    "Pudim de Leite Condensado com Calda Dourada",
+    "Torta Cremosa de Frango de Liquidificador",
+    "Pão de Queijo Mineiro Super Recheado",
+    "Mousse Aerada de Maracujá com Polpa Fresca",
+    "Bolo de Milho Cremoso Caipira",
+    "Brigadeiro Gourmet Macio com Granulado de Chocolate",
+    "Escondidinho de Carne Seca com Purê de Mandioca",
+    "Pastel de Feira Crocante com Recheio Generoso",
+    "Pavê Tradicional de Chocolate com Creme de Baunilha",
+    "Empadão Especial de Frango com Requeijão",
+    "Bolo de Chocolate Fofinho com Calda Quente",
+    "Quindim Brilhante e Amarelinho de Padaria",
+    "Torta de Limão Fácil com Merengue Tostado",
+    "Coxinha de Frango com Massa de Batata e Catupiry",
+    "Rocambole de Doce de Leite Macio",
+    "Panqueca de Carne Moída com Molho Vermelho e Queijo",
+    "Cocada Cremosa de Colher",
+    "Sonho Recheado com Creme de Confeiteiro",
+    "Bolo de Fubá Cremoso com Queijo",
+    "Mousse de Limão Rápida com Raspas",
+    "Bolo de Laranja Molhadinho e Fofinho",
+    "Enroladinho de Salsicha e Queijo Assado",
+    "Torta Holandesa com Creme de Baunilha e Chocolate",
+    "Feijão Tropeiro Mineiro Completo",
+]
+
+
+def validate_script(content: str, settings: dict, tema_sugerido: str = "") -> dict | None:
     """Valida e parseia o roteiro gerado."""
     script_config = settings.get("script", {})
     min_len = script_config.get("min_length_chars", 50)
-    max_len = script_config.get("max_length_chars", 2000)
+    max_len = script_config.get("max_length_chars", 2500)
     validate_json = script_config.get("validate_json", True)
 
     if not content:
@@ -189,22 +234,19 @@ def validate_script(content: str, settings: dict) -> dict | None:
 
         try:
             script_data = json.loads(content_clean)
-            # Formato JSON antigo — valida campos
             required_fields = ["titulo", "prompt_visual", "narracao"]
             for field in required_fields:
                 if field not in script_data:
                     raise ValueError(f"Campo obrigatório ausente: {field}")
             logger.info(f"Roteiro em formato JSON válido: '{script_data.get('titulo')}'")
         except (json.JSONDecodeError, ValueError):
-            # Não é JSON — tenta parsear como texto estruturado (novo formato)
-            logger.info("Resposta não é JSON. Tentando parsear como texto estruturado...")
-            script_data = parse_structured_response(content)
+            logger.info("Tentando parsear como texto estruturado de blocos...")
+            script_data = parse_structured_response(content, tema_sugerido)
             if not script_data:
                 logger.error("Falha ao parsear resposta como texto estruturado.")
                 return None
-            logger.info(f"Roteiro parseado do texto estruturado: '{script_data.get('titulo')}'")
     else:
-        script_data = parse_structured_response(content)
+        script_data = parse_structured_response(content, tema_sugerido)
 
     # Valida tamanho do prompt visual
     prompt_visual = script_data.get("prompt_visual", "")
@@ -241,6 +283,20 @@ def generate_script_with_fallback(
     settings: dict
 ) -> dict | None:
     """Tenta gerar o roteiro usando os modelos em ordem de prioridade."""
+    import random
+    
+    # Sorteia uma receita brasileira para garantir variedade total em cada execução
+    tema_sorteado = random.choice(RECEITAS_VARIADAS)
+    logger.info(f"🎯 Tema sorteado para esta execução: '{tema_sorteado}'")
+
+    # Injeta instrução para focar no tema sorteado
+    prompt_com_tema = (
+        f"{master_prompt}\n\n"
+        f"INSTRUÇÃO OBRIGATÓRIA PARA ESTA EXECUÇÃO:\n"
+        f"Gere o roteiro e narração focando especificamente na receita: '{tema_sorteado}'.\n"
+        f"Certifique-se de que a narração mencione explicitamente essa receita no início com 'Você sabia que se misturar...'."
+    )
+
     or_config = settings.get("openrouter", {})
     base_url = or_config.get("base_url", "https://openrouter.ai/api/v1")
     timeout = or_config.get("timeout_seconds", 60)
@@ -263,7 +319,7 @@ def generate_script_with_fallback(
             content = call_openrouter(
                 api_key=api_key,
                 model_id=model_id,
-                prompt=master_prompt,
+                prompt=prompt_com_tema,
                 max_tokens=max_tokens,
                 temperature=temperature,
                 base_url=base_url,
@@ -271,13 +327,14 @@ def generate_script_with_fallback(
             )
 
             if content:
-                script_data = validate_script(content, settings)
+                script_data = validate_script(content, settings, tema_sorteado)
                 if script_data:
                     script_data["_meta"] = {
                         "model_used": model_id,
                         "model_name": model_name,
                         "generated_at": datetime.now().isoformat(),
-                        "attempt": attempt
+                        "attempt": attempt,
+                        "tema_sorteado": tema_sorteado
                     }
                     return script_data
                 else:
