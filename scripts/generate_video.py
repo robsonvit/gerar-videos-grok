@@ -71,6 +71,73 @@ def load_cookies_from_env() -> list | None:
         return None
 
 
+def dismiss_popups(page, screenshot_dir: Path, label: str = "popup"):
+    """
+    Tenta fechar qualquer popup/modal que esteja bloqueando a interface do Grok.
+    Exemplos: 'Conheça o Grok Bot', banners de novidades, etc.
+    """
+    dismissed = False
+
+    # Estratégia 1: Pressiona Escape para fechar modais
+    try:
+        page.keyboard.press("Escape")
+        time.sleep(0.5)
+        dismissed = True
+        logger.info("Tecla Escape pressionada para fechar popup")
+    except Exception:
+        pass
+
+    # Estratégia 2: Clica no botão X de fechar modal (aria-label, título ou texto)
+    close_selectors = [
+        "button[aria-label='Close']",
+        "button[aria-label='Fechar']",
+        "button[aria-label='close']",
+        "button[title='Close']",
+        "button[title='Fechar']",
+        "[role='dialog'] button:first-child",
+        "[role='dialog'] button[type='button']:first-child",
+        # Botão X genérico dentro de modais
+        "dialog button",
+        # Seletor pelo SVG de X que o Grok usa
+        "[data-testid='close-button']",
+    ]
+    for selector in close_selectors:
+        try:
+            btn = page.query_selector(selector)
+            if btn and btn.is_visible():
+                btn.click(force=True)
+                time.sleep(0.5)
+                dismissed = True
+                logger.info(f"Popup fechado via seletor: {selector}")
+                break
+        except Exception:
+            continue
+
+    # Estratégia 3: Clica fora do modal (background overlay)
+    try:
+        overlay = page.query_selector("[role='dialog']")
+        if overlay and overlay.is_visible():
+            # Clica no canto superior esquerdo da página (fora do modal)
+            page.mouse.click(10, 10)
+            time.sleep(0.5)
+            logger.info("Clicou fora do modal para fechar")
+            dismissed = True
+    except Exception:
+        pass
+
+    # Verifica se ainda há modal visível
+    try:
+        modal = page.query_selector("[role='dialog']")
+        if modal and modal.is_visible():
+            logger.warning("Modal ainda visível após tentativas de fechar")
+            take_screenshot(page, screenshot_dir, f"{label}_modal_persistente")
+        else:
+            if dismissed:
+                logger.info("✅ Popup/modal fechado com sucesso")
+    except Exception:
+        pass
+
+
 def wait_for_video_ready(page, timeout_ms: int, poll_interval_ms: int, screenshot_dir: Path, existing_srcs: set = None) -> str | None:
     """
     Aguarda o vídeo ficar disponível na interface do Grok.
@@ -229,6 +296,13 @@ def generate_video_on_grok(
                 page = context.new_page()
 
                 page.goto(url, wait_until="domcontentloaded", timeout=60000)
+                time.sleep(2)  # Aguarda JS renderizar completamente
+
+                # Fecha qualquer popup/modal que apareça ao carregar
+                # Ex: "Conheça o Grok Bot", banners de novidades, etc.
+                logger.info("Verificando e fechando popups iniciais...")
+                dismiss_popups(page, screenshot_dir, f"initial_attempt{attempt}")
+                time.sleep(1)
 
                 if screenshot_on_error:
                     take_screenshot(page, screenshot_dir, f"page_loaded_attempt{attempt}")
@@ -242,13 +316,22 @@ def generate_video_on_grok(
                         timeout=30000
                     )
                 except PlaywrightTimeout:
-                    logger.warning("Campo de input não encontrado. Pode ser necessário autenticação.")
-                    if screenshot_on_error:
-                        take_screenshot(page, screenshot_dir, f"no_input_attempt{attempt}")
-                    browser.close()
-                    if attempt < max_retries:
-                        time.sleep(retry_delay_s)
-                    continue
+                    logger.warning("Campo de input não encontrado. Tentando fechar popups e aguardar novamente...")
+                    dismiss_popups(page, screenshot_dir, f"retry_popup_attempt{attempt}")
+                    time.sleep(2)
+                    try:
+                        page.wait_for_selector(
+                            "textarea, [contenteditable='true']",
+                            timeout=15000
+                        )
+                    except PlaywrightTimeout:
+                        logger.warning("Campo de input ainda não encontrado. Pode ser necessário autenticação.")
+                        if screenshot_on_error:
+                            take_screenshot(page, screenshot_dir, f"no_input_attempt{attempt}")
+                        browser.close()
+                        if attempt < max_retries:
+                            time.sleep(retry_delay_s)
+                        continue
 
                 # Insere o prompt
                 logger.info(f"Inserindo prompt ({len(prompt)} chars)...")
