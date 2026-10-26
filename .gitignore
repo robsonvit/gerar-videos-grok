@@ -41,3 +41,11 @@ test-results/
 *.tmp
 *.temp
 ~$*
+full_log.txt
+output_from_github/
+
+# Scripts locais com tokens e credenciais
+scripts/google_apps_script.js
+*cookies*.json
+*PRIVADO*
+
