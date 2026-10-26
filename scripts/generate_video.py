@@ -73,67 +73,92 @@ def load_cookies_from_env() -> list | None:
 
 def dismiss_popups(page, screenshot_dir: Path, label: str = "popup"):
     """
-    Tenta fechar qualquer popup/modal que esteja bloqueando a interface do Grok.
-    Exemplos: 'Conheça o Grok Bot', banners de novidades, etc.
+    Fecha qualquer popup/modal que esteja bloqueando a interface do Grok.
+    Exemplos: 'Conheça o Bot do Grok', 'Shape your scene', banners de novidades, etc.
     """
     dismissed = False
 
-    # Estratégia 1: Pressiona Escape para fechar modais
-    try:
-        page.keyboard.press("Escape")
-        time.sleep(0.5)
-        dismissed = True
-        logger.info("Tecla Escape pressionada para fechar popup")
-    except Exception:
-        pass
-
-    # Estratégia 2: Clica no botão X de fechar modal (aria-label, título ou texto)
-    close_selectors = [
+    # Estratégia 1: Clica em botões de confirmação/fechamento conhecidos
+    action_selectors = [
+        "button:has-text('Comece agora')",
+        "button:has-text('Começar')",
+        "button:has-text('Get started')",
+        "button:has-text('Start now')",
+        "button:has-text('Try it now')",
         "button[aria-label='Close']",
         "button[aria-label='Fechar']",
         "button[aria-label='close']",
         "button[title='Close']",
         "button[title='Fechar']",
-        "[role='dialog'] button:first-child",
-        "[role='dialog'] button[type='button']:first-child",
-        # Botão X genérico dentro de modais
-        "dialog button",
-        # Seletor pelo SVG de X que o Grok usa
+        "[role='dialog'] button",
         "[data-testid='close-button']",
     ]
-    for selector in close_selectors:
+    for selector in action_selectors:
         try:
-            btn = page.query_selector(selector)
-            if btn and btn.is_visible():
-                btn.click(force=True)
-                time.sleep(0.5)
-                dismissed = True
-                logger.info(f"Popup fechado via seletor: {selector}")
-                break
+            btns = page.query_selector_all(selector)
+            for btn in btns:
+                if btn.is_visible():
+                    btn.click(force=True)
+                    time.sleep(0.3)
+                    dismissed = True
+                    logger.info(f"Botão de popup acionado via seletor: {selector}")
         except Exception:
             continue
 
-    # Estratégia 3: Clica fora do modal (background overlay)
+    # Estratégia 2: Pressiona Escape
     try:
-        overlay = page.query_selector("[role='dialog']")
-        if overlay and overlay.is_visible():
-            # Clica no canto superior esquerdo da página (fora do modal)
-            page.mouse.click(10, 10)
-            time.sleep(0.5)
-            logger.info("Clicou fora do modal para fechar")
-            dismissed = True
+        page.keyboard.press("Escape")
+        time.sleep(0.3)
     except Exception:
         pass
+
+    # Estratégia 3: Remoção direta via JavaScript (infalível para modais e backdrops persistentes)
+    try:
+        removed_count = page.evaluate("""() => {
+            let count = 0;
+            // 1. Tenta clicar em botões dentro do dialog
+            document.querySelectorAll('[role="dialog"], dialog').forEach(d => {
+                d.querySelectorAll('button').forEach(b => {
+                    const txt = (b.innerText || '').toLowerCase();
+                    const aria = (b.getAttribute('aria-label') || '').toLowerCase();
+                    if (txt.includes('comece') || txt.includes('fechar') || txt.includes('close') ||
+                        aria.includes('close') || aria.includes('fechar') || txt.includes('try it')) {
+                        try { b.click(); count++; } catch (e) {}
+                    }
+                });
+            });
+            // 2. Remove modais e overlays do DOM se ainda existirem
+            document.querySelectorAll('[role="dialog"], dialog, [data-state="open"]').forEach(el => {
+                el.remove();
+                count++;
+            });
+            // 3. Remove backdrops que possam bloquear cliques
+            document.querySelectorAll('div[class*="backdrop"], div[class*="overlay"]').forEach(el => {
+                el.remove();
+                count++;
+            });
+            // 4. Restaura pointer-events e overflow da página
+            if (document.body) {
+                document.body.style.pointerEvents = 'auto';
+                document.body.style.overflow = 'auto';
+            }
+            return count;
+        }""")
+        if removed_count > 0:
+            logger.info(f"Remoção via JS eliminou/acionou {removed_count} elemento(s) de modal/backdrop")
+            dismissed = True
+    except Exception as e:
+        logger.warning(f"Falha na remoção de popup via JS: {e}")
 
     # Verifica se ainda há modal visível
     try:
         modal = page.query_selector("[role='dialog']")
         if modal and modal.is_visible():
-            logger.warning("Modal ainda visível após tentativas de fechar")
+            logger.warning("Modal ainda visível após todas as tentativas")
             take_screenshot(page, screenshot_dir, f"{label}_modal_persistente")
         else:
             if dismissed:
-                logger.info("✅ Popup/modal fechado com sucesso")
+                logger.info("✅ Popup/modal fechado/removido com sucesso")
     except Exception:
         pass
 
@@ -397,6 +422,10 @@ def generate_video_on_grok(
                     pass
                 logger.info(f"Encontrados {len(existing_srcs)} vídeos antigos na página para ignorar.")
 
+                # Garante que nenhum popup novo apareceu antes do envio
+                dismiss_popups(page, screenshot_dir, f"before_submit_attempt{attempt}")
+                time.sleep(0.5)
+
                 # Envia o prompt
                 # SELETOR: Botão de envio
                 logger.info("Enviando prompt...")
@@ -404,8 +433,8 @@ def generate_video_on_grok(
                     send_button = page.query_selector(
                         "button[type='submit'], button[aria-label*='Send'], button[aria-label*='Enviar']"
                     )
-                    if send_button:
-                        send_button.click()
+                    if send_button and send_button.is_visible():
+                        send_button.click(force=True)
                     else:
                         page.keyboard.press("Enter")
                 except Exception:
