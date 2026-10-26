@@ -163,25 +163,165 @@ def dismiss_popups(page, screenshot_dir: Path, label: str = "popup"):
         pass
 
 
-def wait_for_video_ready(page, timeout_ms: int, poll_interval_ms: int, screenshot_dir: Path, existing_srcs: set = None) -> str | None:
+def select_video_mode(page, max_retries: int = 5) -> bool:
+    """
+    Garante que o modo Vídeo está selecionado na interface do Grok Aurora.
+    Retorna True se confirmado que está em modo vídeo, False caso contrário.
+    """
+    logger.info("Verificando e selecionando modo Vídeo...")
+    duration_locator = page.locator("[aria-label*='uração do vídeo' i], [title*='uração do vídeo' i], [aria-label*='ideo duration' i]").first
+
+    for attempt in range(1, max_retries + 1):
+        try:
+            # 1. Verifica se já está em modo vídeo (ex: botão de duração já está visível)
+            if duration_locator.is_visible(timeout=1000):
+                logger.info("✅ Modo Vídeo já está ativo (botão de duração presente)")
+                return True
+
+            # 2. Tenta clicar no botão de vídeo via múltiplos seletores Playwright com auto-wait
+            clicked = False
+            video_locators = [
+                "button:has-text('Imagem') + button",
+                "button:has-text('Imagem') ~ button",
+                "button[aria-label*='ideo' i]",
+                "button[title*='ideo' i]",
+                "button:has-text('Vídeo')",
+                "button:has-text('Video')",
+            ]
+
+            for loc in video_locators:
+                try:
+                    btn = page.locator(loc).first
+                    if btn.is_visible(timeout=1500):
+                        btn.click(force=True)
+                        logger.info(f"Botão de modo Vídeo clicado via locator: {loc}")
+                        clicked = True
+                        time.sleep(1)
+                        break
+                except Exception:
+                    continue
+
+            # 3. Fallback: injeção JavaScript robusta
+            if not clicked:
+                js_clicked = page.evaluate("""() => {
+                    const buttons = Array.from(document.querySelectorAll('button'));
+                    const vBtn = buttons.find(b => {
+                        const aria = (b.getAttribute('aria-label') || '').toLowerCase();
+                        const txt = (b.innerText || '').toLowerCase();
+                        const title = (b.getAttribute('title') || '').toLowerCase();
+                        return aria.includes('video') || aria.includes('vídeo') ||
+                               txt.includes('video') || txt.includes('vídeo') ||
+                               title.includes('video') || title.includes('vídeo');
+                    });
+                    if (vBtn) {
+                        vBtn.click();
+                        return 'video_button';
+                    }
+                    const imgBtn = buttons.find(b => (b.innerText || '').toLowerCase().includes('imagem'));
+                    if (imgBtn) {
+                        let next = imgBtn.nextElementSibling;
+                        while (next && next.tagName !== 'BUTTON') next = next.nextElementSibling;
+                        if (!next && imgBtn.parentElement) {
+                            const siblings = Array.from(imgBtn.parentElement.querySelectorAll('button'));
+                            const idx = siblings.indexOf(imgBtn);
+                            if (idx !== -1 && idx + 1 < siblings.length) next = siblings[idx + 1];
+                        }
+                        if (next) {
+                            next.click();
+                            return 'sibling_button';
+                        }
+                    }
+                    return null;
+                }""")
+                if js_clicked:
+                    logger.info(f"Modo Vídeo acionado via JS: {js_clicked}")
+                    time.sleep(1)
+
+            # 4. Confirma se o modo Vídeo foi ativado
+            if duration_locator.is_visible(timeout=2500):
+                logger.info("✅ Modo Vídeo confirmado ativo!")
+                return True
+        except Exception as e:
+            logger.warning(f"Tentativa {attempt} ao selecionar modo Vídeo: {e}")
+
+        time.sleep(1)
+
+    logger.warning("Não foi possível confirmar ativação do modo Vídeo após várias tentativas")
+    return False
+
+
+def select_duration_15s(page) -> bool:
+    """Seleciona a duração de 15 segundos no menu de duração do vídeo."""
+    logger.info("Configurando duração do vídeo para 15s...")
+    try:
+        duration_btn = page.locator("[aria-label*='uração do vídeo' i], [title*='uração do vídeo' i], [aria-label*='ideo duration' i]").first
+        if not duration_btn.is_visible(timeout=2000):
+            fallback_btn = page.locator("button:has-text('5s'), button:has-text('6s'), button:has-text('10s'), button:has-text('15s')").first
+            if fallback_btn.is_visible(timeout=2000):
+                duration_btn = fallback_btn
+
+        if duration_btn.is_visible(timeout=2000):
+            text_now = duration_btn.inner_text().strip()
+            logger.info(f"Botão de duração encontrado. Valor atual: '{text_now}'")
+            if '15' in text_now:
+                logger.info("Duração já está configurada para 15s.")
+                return True
+
+            duration_btn.click(force=True)
+            logger.info("Menu de duração aberto. Aguardando opções...")
+            time.sleep(1)
+
+            opt_15s = page.locator("[role='menuitem']:has-text('15s'), button:has-text('15s'), text='15s'").last
+            if opt_15s.is_visible(timeout=3000):
+                opt_15s.click(force=True)
+                logger.info("✅ Duração de 15s selecionada com sucesso!")
+                time.sleep(0.5)
+                return True
+            else:
+                all_els = page.locator("text=15s").all()
+                if all_els:
+                    all_els[-1].click(force=True)
+                    logger.info("✅ Duração de 15s selecionada via fallback!")
+                    time.sleep(0.5)
+                    return True
+                logger.warning("Opção 15s não encontrada no menu.")
+        else:
+            logger.warning("Botão de duração não encontrado.")
+    except Exception as e:
+        logger.warning(f"Erro ao selecionar duração de 15s: {e}")
+    return False
+
+
+def wait_for_video_ready(
+    page,
+    timeout_ms: int,
+    poll_interval_ms: int,
+    screenshot_dir: Path,
+    existing_srcs: set = None,
+    captured_urls: list = None
+) -> str | None:
     """
     Aguarda o vídeo ficar disponível na interface do Grok.
     Retorna a URL do vídeo ou None em caso de timeout.
-
-    ATENÇÃO: Os seletores abaixo devem ser atualizados se a interface do Grok mudar.
-    Verifique os seletores em: config/settings.json -> generation.selectors
     """
     logger.info("Aguardando geração do vídeo...")
     start_time = time.time()
     timeout_s = timeout_ms / 1000
-    
+
     if existing_srcs is None:
         existing_srcs = set()
+    if captured_urls is None:
+        captured_urls = []
 
     while (time.time() - start_time) < timeout_s:
         try:
-            # Tenta localizar elemento de vídeo gerado
-            # SELETOR: Atualizar se a interface mudar
+            # 1. Verifica se interceptamos URL de vídeo via rede
+            for url in captured_urls:
+                if url and url not in existing_srcs:
+                    logger.info(f"🎯 Vídeo detectado via tráfego de rede: {url[:80]}...")
+                    return url
+
+            # 2. Tenta localizar elemento de vídeo gerado no DOM
             video_elements = page.query_selector_all("video, video source, source")
             for video in video_elements:
                 src = video.get_attribute("src")
@@ -189,6 +329,32 @@ def wait_for_video_ready(page, timeout_ms: int, poll_interval_ms: int, screensho
                     if src not in existing_srcs:
                         logger.info(f"Vídeo detectado com src: {src[:80]}...")
                         return src
+
+            # 3. Verifica via JavaScript (currentSrc e src em <video>)
+            js_src = page.evaluate("""() => {
+                for (const v of document.querySelectorAll('video')) {
+                    const s = v.currentSrc || v.src;
+                    if (s && (s.includes('blob:') || s.includes('.mp4') || s.toLowerCase().includes('media'))) {
+                        return s;
+                    }
+                }
+                return null;
+            }""")
+            if js_src and js_src not in existing_srcs:
+                logger.info(f"Vídeo detectado via currentSrc (JS): {js_src[:80]}...")
+                return js_src
+
+            # 4. Tenta clicar em botões de play / preview gerados após 30s
+            if int(time.time() - start_time) > 30:
+                try:
+                    page.evaluate("""() => {
+                        const playBtns = document.querySelectorAll("button[aria-label*='Play' i], button[aria-label*='Reproduzir' i], [role='button'] svg");
+                        if (playBtns.length > 0) {
+                            try { playBtns[0].closest('button, [role=\"button\"]').click(); } catch (e) {}
+                        }
+                    }""")
+                except Exception:
+                    pass
 
             # Verifica se há mensagem de erro na página
             error_texts = [
@@ -358,58 +524,34 @@ def generate_video_on_grok(
                             time.sleep(retry_delay_s)
                         continue
 
-                # Insere o prompt
+                # Registra listener para capturar URLs de vídeo pelo tráfego de rede
+                captured_video_urls = []
+                def on_network_response(resp):
+                    try:
+                        r_url = resp.url
+                        ct = (resp.headers.get("content-type") or "").lower()
+                        if (".mp4" in r_url or "video" in ct) and not r_url.endswith(".m3u8"):
+                            if r_url not in captured_video_urls:
+                                logger.info(f"🌐 Interceptada URL de vídeo na rede: {r_url[:80]}...")
+                                captured_video_urls.append(r_url)
+                    except Exception:
+                        pass
+
+                page.on("response", on_network_response)
+
+                # Garante modo Vídeo e duração de 15s antes de inserir o prompt
+                select_video_mode(page)
+                select_duration_15s(page)
+
+                # Insere o prompt usando locator nativo (auto-wait e resiliente a re-render)
                 logger.info(f"Inserindo prompt ({len(prompt)} chars)...")
                 input_selector = "textarea, [contenteditable='true']"
-                page.fill(input_selector, prompt)
+                page.locator(input_selector).first.fill(prompt)
                 time.sleep(1)
 
-                # Garante que o modo Vídeo está selecionado
-                # SELETOR: O botão de vídeo fica ao lado do botão de Imagem
-                try:
-                    video_button = page.query_selector("button:has-text('Imagem') + button")
-                    if video_button:
-                        video_button.click()
-                        logger.info("Modo Vídeo selecionado (clique)")
-                        time.sleep(0.5)
-                    else:
-                        logger.info("Botão de modo vídeo não encontrado - possivelmente já está em modo vídeo.")
-                except Exception as e:
-                    logger.warning(f"Não foi possível selecionar modo vídeo: {e}")
-
-                # Seleciona duração 15s - INDEPENDENTE do modo vídeo
-                # O aria-label exato conforme dump: 'Duração do vídeo'
-                try:
-                    time.sleep(0.5)
-                    btn_duration = page.locator("[aria-label='Duração do vídeo']").first
-                    if btn_duration.is_visible(timeout=2000):
-                        text_now = btn_duration.inner_text().strip()
-                        logger.info(f"Botão de duração encontrado. Valor atual: '{text_now}'")
-                        if '15' in text_now:
-                            logger.info("Duração já está em 15s.")
-                        else:
-                            btn_duration.click(force=True)
-                            logger.info("Menu de duração aberto. Aguardando opções...")
-                            time.sleep(1.5)
-                            
-                            # Busca a opção 15s no menu aberto
-                            btn_15s = page.locator("text='15s'").last
-                            if btn_15s.is_visible(timeout=2000):
-                                btn_15s.click(force=True)
-                                logger.info("✅ Duração de 15s selecionada com sucesso!")
-                                time.sleep(0.5)
-                            else:
-                                # Fallback: tenta pelo texto sem aspas
-                                all_els = page.locator("text=15s").all()
-                                if all_els:
-                                    all_els[-1].click(force=True)
-                                    logger.info("✅ Duração de 15s selecionada via fallback!")
-                                else:
-                                    logger.warning("❌ Opção 15s não encontrada no menu.")
-                    else:
-                        logger.warning("❌ Botão de 'Duração do vídeo' não visível após 2s.")
-                except Exception as e:
-                    logger.warning(f"Erro ao selecionar duração de 15s: {e}")
+                # Confirma modo Vídeo e 15s após digitação do prompt
+                select_video_mode(page)
+                select_duration_15s(page)
 
                 # Coleta vídeos já existentes na página para ignorá-los
                 existing_srcs = set()
@@ -417,7 +559,8 @@ def generate_video_on_grok(
                     video_els = page.query_selector_all("video, video source, source")
                     for el in video_els:
                         src = el.get_attribute("src")
-                        if src: existing_srcs.add(src)
+                        if src:
+                            existing_srcs.add(src)
                 except Exception as e:
                     pass
                 logger.info(f"Encontrados {len(existing_srcs)} vídeos antigos na página para ignorar.")
@@ -427,14 +570,11 @@ def generate_video_on_grok(
                 time.sleep(0.5)
 
                 # Envia o prompt
-                # SELETOR: Botão de envio
                 logger.info("Enviando prompt...")
                 try:
-                    send_button = page.query_selector(
-                        "button[type='submit'], button[aria-label*='Send'], button[aria-label*='Enviar']"
-                    )
-                    if send_button and send_button.is_visible():
-                        send_button.click(force=True)
+                    send_btn = page.locator("button[type='submit'], button[aria-label*='Send' i], button[aria-label*='Enviar' i]").first
+                    if send_btn.is_visible(timeout=2000):
+                        send_btn.click(force=True)
                     else:
                         page.keyboard.press("Enter")
                 except Exception:
@@ -451,7 +591,8 @@ def generate_video_on_grok(
                     timeout_ms=timeout_s * 1000,
                     poll_interval_ms=poll_interval_s * 1000,
                     screenshot_dir=screenshot_dir,
-                    existing_srcs=existing_srcs
+                    existing_srcs=existing_srcs,
+                    captured_urls=captured_video_urls
                 )
 
                 if video_src:
