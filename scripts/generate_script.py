@@ -140,6 +140,10 @@ def parse_structured_response(content: str, tema_sugerido: str = "") -> dict | N
             narr_text = match_narr[1].strip()
             # Limpa se houver início de outro bloco ou instrução
             narr_text = re.split(r'(?i)(?:\n\s*PROMPT\s+VISUAL|\n\s*###|\n\s*\*\*PROMPT|\Z)', narr_text)[0].strip()
+            # Remove delimitadores Markdown (---, ***, ===, etc.) e aspas residuais
+            narr_text = re.sub(r'[\r\n\s]*(?:---+|\*\*\*+|===+|___+)[\r\n\s]*$', '', narr_text).strip()
+            narr_text = re.sub(r'^[\r\n\s]*(?:---+|\*\*\*+|===+|___+)[\r\n\s]*', '', narr_text).strip().strip('"\'')
+            prompt_vis = re.sub(r'[\r\n\s]*(?:---+|\*\*\*+|===+|___+)[\r\n\s]*$', '', prompt_vis).strip().strip('"\'')
             if prompt_vis and narr_text:
                 blocos.append((prompt_vis, narr_text))
 
@@ -294,7 +298,8 @@ def generate_script_with_fallback(
         f"{master_prompt}\n\n"
         f"INSTRUÇÃO OBRIGATÓRIA PARA ESTA EXECUÇÃO:\n"
         f"Gere o roteiro e narração focando especificamente na receita: '{tema_sorteado}'.\n"
-        f"Certifique-se de que a narração mencione explicitamente essa receita no início com 'Você sabia que se misturar...'."
+        f"Certifique-se de que a narração mencione explicitamente essa receita no início com 'Você sabia que se misturar...'.\n"
+        f"IMPORTANTE: A narração DEVE ter entre 35 e 45 palavras no total para caber perfeitamente no ritmo de 15 segundos do vídeo."
     )
 
     or_config = settings.get("openrouter", {})

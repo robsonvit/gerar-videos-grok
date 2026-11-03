@@ -169,7 +169,7 @@ def select_video_mode(page, max_retries: int = 5) -> bool:
     Retorna True se confirmado que está em modo vídeo, False caso contrário.
     """
     logger.info("Verificando e selecionando modo Vídeo...")
-    duration_locator = page.locator("[aria-label*='uração do vídeo' i], [title*='uração do vídeo' i], [aria-label*='ideo duration' i]").first
+    duration_locator = page.locator("[aria-label*='uração do vídeo' i], [title*='uração do vídeo' i], [aria-label*='ideo duration' i], button:has-text('5s'), button:has-text('6s'), button:has-text('10s'), button:has-text('15s')").first
 
     for attempt in range(1, max_retries + 1):
         try:
@@ -254,42 +254,89 @@ def select_duration_15s(page) -> bool:
     """Seleciona a duração de 15 segundos no menu de duração do vídeo."""
     logger.info("Configurando duração do vídeo para 15s...")
     try:
-        duration_btn = page.locator("[aria-label*='uração do vídeo' i], [title*='uração do vídeo' i], [aria-label*='ideo duration' i]").first
+        duration_btn = page.locator(
+            "[aria-label*='uração do vídeo' i], [title*='uração do vídeo' i], [aria-label*='ideo duration' i]"
+        ).first
         if not duration_btn.is_visible(timeout=2000):
-            fallback_btn = page.locator("button:has-text('5s'), button:has-text('6s'), button:has-text('10s'), button:has-text('15s')").first
+            fallback_btn = page.locator(
+                "button:has-text('5s'), button:has-text('6s'), button:has-text('10s'), button:has-text('15s')"
+            ).first
             if fallback_btn.is_visible(timeout=2000):
                 duration_btn = fallback_btn
 
-        if duration_btn.is_visible(timeout=2000):
-            text_now = duration_btn.inner_text().strip()
-            logger.info(f"Botão de duração encontrado. Valor atual: '{text_now}'")
-            if '15' in text_now:
-                logger.info("Duração já está configurada para 15s.")
-                return True
-
-            duration_btn.click(force=True)
-            logger.info("Menu de duração aberto. Aguardando opções...")
-            time.sleep(1)
-
-            opt_15s = page.locator("[role='menuitem']:has-text('15s'), button:has-text('15s'), text='15s'").last
-            if opt_15s.is_visible(timeout=3000):
-                opt_15s.click(force=True)
-                logger.info("✅ Duração de 15s selecionada com sucesso!")
-                time.sleep(0.5)
-                return True
-            else:
-                all_els = page.locator("text=15s").all()
-                if all_els:
-                    all_els[-1].click(force=True)
-                    logger.info("✅ Duração de 15s selecionada via fallback!")
-                    time.sleep(0.5)
-                    return True
-                logger.warning("Opção 15s não encontrada no menu.")
-        else:
+        if not duration_btn.is_visible(timeout=2000):
             logger.warning("Botão de duração não encontrado.")
+            return False
+
+        text_now = duration_btn.inner_text().strip()
+        logger.info(f"Botão de duração encontrado. Valor atual: '{text_now}'")
+        if '15' in text_now:
+            logger.info("Duração já está configurada para 15s.")
+            return True
+
+        # Abre o menu de duração
+        duration_btn.click(force=True)
+        logger.info("Menu de duração aberto. Aguardando opções...")
+        time.sleep(1)
+
+        clicked = False
+
+        # Estratégia 1: Locators individuais válidos no Playwright (sem sintaxe inválida de vírgula)
+        menu_locators = [
+            page.locator("[role='menuitem']").filter(has_text="15s"),
+            page.locator("button").filter(has_text="15s"),
+            page.get_by_role("menuitem", name="15s"),
+            page.get_by_text("15s", exact=True),
+            page.locator("text='15s'"),
+        ]
+
+        for loc in menu_locators:
+            try:
+                el = loc.last
+                if el.is_visible(timeout=1500):
+                    el.click(force=True)
+                    logger.info("[OK] Duração de 15s clicada via locator Playwright!")
+                    clicked = True
+                    break
+            except Exception:
+                continue
+
+        # Estratégia 2: Fallback direto via JavaScript (busca elementos visíveis com texto 15s)
+        if not clicked:
+            js_res = page.evaluate("""() => {
+                const elements = Array.from(document.querySelectorAll('*'));
+                const target = elements.reverse().find(el => {
+                    const txt = (el.innerText || el.textContent || '').trim();
+                    const isVisible = el.offsetWidth > 0 && el.offsetHeight > 0;
+                    return isVisible && (txt === '15s' || txt === '15 s' || txt === '15 seg');
+                });
+                if (target) {
+                    target.click();
+                    return 'clicked_exact_15s';
+                }
+                return null;
+            }""")
+            if js_res:
+                logger.info(f"[OK] Duração de 15s clicada via JS: {js_res}")
+                clicked = True
+
+        time.sleep(1)
+
+        # Confirmação pós-seleção: verifica se o botão agora reflete 15s
+        try:
+            confirmed_text = duration_btn.inner_text().strip()
+            logger.info(f"Valor atual do botão de duração após seleção: '{confirmed_text}'")
+            if '15' in confirmed_text:
+                logger.info("[OK] Duração de 15s confirmada com sucesso!")
+                return True
+        except Exception:
+            pass
+
+        return clicked
+
     except Exception as e:
         logger.warning(f"Erro ao selecionar duração de 15s: {e}")
-    return False
+        return False
 
 
 def wait_for_video_ready(
@@ -397,18 +444,24 @@ def download_video(page, video_src: str, output_path: Path) -> bool:
                 async (src) => {
                     const response = await fetch(src);
                     const buffer = await response.arrayBuffer();
+                    let binary = '';
                     const bytes = new Uint8Array(buffer);
-                    return Array.from(bytes);
+                    const chunk = 0x8000;
+                    for (let i = 0; i < bytes.length; i += chunk) {
+                        binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+                    }
+                    return btoa(binary);
                 }
             """, video_src)
 
             if video_data:
+                import base64
                 with open(output_path, "wb") as f:
-                    f.write(bytes(video_data))
+                    f.write(base64.b64decode(video_data))
                 logger.info(f"Vídeo blob salvo em: {output_path}")
                 return True
             else:
-                logger.error("Dados do blob vazio")
+                logger.error("Dados do blob vazios")
                 return False
 
         elif video_src.startswith("http"):
@@ -612,7 +665,8 @@ def generate_video_on_grok(
             logger.error(f"Erro durante automação do navegador (tentativa {attempt}): {e}")
             if screenshot_on_error:
                 try:
-                    take_screenshot(page, screenshot_dir, f"exception_attempt{attempt}")
+                    if 'page' in locals():
+                        take_screenshot(page, screenshot_dir, f"exception_attempt{attempt}")
                 except Exception:
                     pass
 
@@ -661,6 +715,9 @@ def main():
         narracao = script_data.get("narracao", "")
         titulo = script_data.get("titulo", "video")
         
+        # Limpa qualquer resíduo ou delimitador markdown da narração
+        narracao = re.sub(r'[\r\n\s]*(?:---+|\*\*\*+|===+|___+)[\r\n\s]*$', '', narracao).strip().strip('"\'')
+
         # Junta a narração ao prompt visual para o Grok falar o texto exato
         if narracao:
             prompt = f"{prompt_base}\n\nAudio: AI voice speaking in Brazilian Portuguese saying EXACTLY this: '{narracao}'"

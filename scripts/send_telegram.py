@@ -54,8 +54,10 @@ def build_caption(script_data: dict, video_filename: str, settings: dict) -> str
     titulo = html.escape(script_data.get("titulo", "Vídeo Gerado"))
     narracao = html.escape(script_data.get("narracao", ""))
     
-    if len(narracao) > 800:
-        narracao = narracao[:800] + "..."
+    # Corta a narração com folga para a legenda inteira ficar
+    # abaixo do limite de 1024 chars do Telegram (limite da API)
+    if len(narracao) > 400:
+        narracao = narracao[:400] + "..."
         
     estilo = html.escape(script_data.get("estilo", ""))
     model_used = html.escape(script_data.get("_meta", {}).get("model_name", "OpenRouter"))
@@ -119,7 +121,8 @@ def send_video_to_telegram(
                 }
 
                 if caption:
-                    data["caption"] = caption[:1024] if not parse_mode else caption # Se for HTML, o slice deve ser evitado ou feito antes.
+                    # Limite de 1024 chars da API do Telegram
+                    data["caption"] = caption[:1024]
                     data["parse_mode"] = parse_mode
 
                 response = requests.post(
