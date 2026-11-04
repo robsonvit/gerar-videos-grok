@@ -43,6 +43,7 @@ test-results/
 ~$*
 full_log.txt
 output_from_github/
+graft/
 
 # Scripts locais com tokens e credenciais
 scripts/google_apps_script.js

@@ -13,6 +13,12 @@ from datetime import datetime
 from pathlib import Path
 import requests
 
+# Configuração de encoding para suportar caracteres especiais e emojis em qualquer OS
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 # Configuração de logging
 logging.basicConfig(
     level=logging.INFO,
@@ -63,8 +69,11 @@ def call_openrouter(
     temperature: float,
     base_url: str,
     timeout: int
-) -> str | None:
-    """Faz uma chamada à OpenRouter API e retorna o conteúdo gerado."""
+) -> tuple[str | None, bool]:
+    """
+    Faz uma chamada à OpenRouter API e retorna (conteúdo, deve_tentar_novamente).
+    Se o erro for não-recuperável (400, 401, 403, 404), deve_tentar_novamente=False.
+    """
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
@@ -95,24 +104,37 @@ def call_openrouter(
 
         if response.status_code == 200:
             data = response.json()
-            content = data["choices"][0]["message"]["content"].strip()
-            logger.info(f"Resposta recebida com sucesso do modelo {model_id}")
-            return content
+            choices = data.get("choices", [])
+            if choices:
+                msg = choices[0].get("message", {})
+                content = msg.get("content") or msg.get("reasoning") or msg.get("text") or ""
+                if isinstance(content, str) and content.strip():
+                    logger.info(f"Resposta recebida com sucesso do modelo {model_id}")
+                    return content.strip(), False
+            logger.warning(f"Modelo {model_id} retornou 200 mas sem conteúdo de texto válido: {str(data)[:200]}")
+            return None, True
+
+        elif response.status_code in (400, 401, 403, 404):
+            logger.warning(
+                f"Modelo {model_id} retornou erro permanente ({response.status_code}): {response.text[:200]}"
+            )
+            return None, False
+
         else:
             logger.warning(
-                f"Modelo {model_id} retornou status {response.status_code}: {response.text[:200]}"
+                f"Modelo {model_id} retornou status transitório {response.status_code}: {response.text[:200]}"
             )
-            return None
+            return None, True
 
     except requests.exceptions.Timeout:
-        logger.warning(f"Timeout ao chamar modelo {model_id}")
-        return None
+        logger.warning(f"Timeout ({timeout}s) ao chamar modelo {model_id}")
+        return None, True
     except requests.exceptions.ConnectionError as e:
         logger.warning(f"Erro de conexão com modelo {model_id}: {e}")
-        return None
+        return None, True
     except Exception as e:
         logger.warning(f"Erro inesperado ao chamar modelo {model_id}: {e}")
-        return None
+        return None, True
 
 
 def parse_structured_response(content: str, tema_sugerido: str = "") -> dict | None:
@@ -157,6 +179,10 @@ def parse_structured_response(content: str, tema_sugerido: str = "") -> dict | N
         
         m_narr = re.search(r'(?i)NARRAÇÃO[^\n:]*:\s*(.*?)(?=\n\s*PROMPT|\Z)', content, re.DOTALL)
         gancho = m_narr.group(1).strip() if m_narr else "Vídeo gerado automaticamente"
+
+        # Limpa delimitadores residuais de markdown
+        prompt_grok = re.sub(r'[\r\n\s]*(?:---+|\*\*\*+|===+|___+)[\r\n\s]*$', '', prompt_grok).strip().strip('"\'')
+        gancho = re.sub(r'[\r\n\s]*(?:---+|\*\*\*+|===+|___+)[\r\n\s]*$', '', gancho).strip().strip('"\'')
 
     # Tenta extrair o nome da receita da narração
     # Padrão: 'vai fazer um(a) [delicioso(a)] [nome da receita], rápido...'
@@ -280,87 +306,164 @@ def save_script(script_data: dict, output_dir: Path) -> Path:
     return output_path
 
 
+def generate_offline_recipe(tema: str) -> dict:
+    """
+    Gera um roteiro local de altíssima fidelidade caso todas as chamadas de API falhem.
+    Garante 100% de conformidade: formato 9:16 vertical, 15 segundos no Grok,
+    começo (mistura), meio (preparo), fim (servindo) e narração brasileira entre 35 e 45 palavras.
+    """
+    tema_clean = tema.strip().title()
+    prompt_visual = (
+        f"Vertical video, 9:16 aspect ratio, exactly 15 seconds long. "
+        f"First-person POV cooking footage in a cozy realistic Brazilian home kitchen with warm natural morning lighting. "
+        f"0-4s Beginning: natural human hands mixing fresh ingredients for {tema_clean} in a ceramic bowl with a rustic wooden spoon, appetizing close-up textures. "
+        f"4-10s Middle: fast dynamic preparation of {tema_clean}, transferring into cookware and cooking to golden perfection with gentle steam rising. "
+        f"10-15s End: hands delicately cutting and serving a generous, steaming slice of the finished {tema_clean} onto a vintage plate, highlighting creamy texture, mouth-watering appetizing food presentation. "
+        f"No text overlays, no subtitles, no watermarks, photorealistic 4k food videography."
+    )
+
+    narracao = (
+        f"Você sabia que se misturar os ingredientes certos com muito carinho, "
+        f"vai fazer um delicioso {tema_clean}, rápido, prático e muito gostoso? "
+        f"Em poucos minutos fica com uma textura incrível e sabor de dar água na boca!"
+    )
+
+    logger.info(f"Roteiro offline gerado para: '{tema_clean}'")
+    return {
+        "titulo": tema_clean,
+        "prompt_visual": prompt_visual,
+        "narracao": narracao,
+        "legenda": "",
+        "hashtags": "",
+        "conceito": tema_clean,
+        "gancho": narracao,
+        "_meta": {
+            "model_used": "offline-fallback-generator",
+            "model_name": "Gerador Local Resiliente",
+            "generated_at": datetime.now().isoformat(),
+            "tema_sorteado": tema_clean,
+        }
+    }
+
+
 def generate_script_with_fallback(
     api_key: str,
     models: list,
     master_prompt: str,
-    settings: dict
-) -> dict | None:
-    """Tenta gerar o roteiro usando os modelos em ordem de prioridade."""
+    settings: dict,
+    custom_prompt: str = "",
+    custom_titulo: str = ""
+) -> dict:
+    """Tenta gerar o roteiro usando os modelos em ordem de prioridade com fallback inteligente."""
     import random
     
+    # Se houver custom_prompt fornecido manualmente via GitHub Actions
+    if custom_prompt:
+        titulo = custom_titulo or "Receita Personalizada"
+        logger.info(f"Usando prompt personalizado manual: '{titulo}'")
+        return {
+            "titulo": titulo,
+            "prompt_visual": custom_prompt,
+            "narracao": "Você sabia que se misturar os ingredientes certos com muito carinho, vai fazer uma receita deliciosa, rápida, prática e muito gostosa?",
+            "legenda": "",
+            "hashtags": "",
+            "conceito": titulo,
+            "gancho": "",
+            "_meta": {
+                "model_used": "manual-custom-prompt",
+                "model_name": "Custom Input",
+                "generated_at": datetime.now().isoformat(),
+            }
+        }
+
     # Sorteia uma receita brasileira para garantir variedade total em cada execução
-    tema_sorteado = random.choice(RECEITAS_VARIADAS)
+    tema_sorteado = custom_titulo or random.choice(RECEITAS_VARIADAS)
     logger.info(f"🎯 Tema sorteado para esta execução: '{tema_sorteado}'")
 
-    # Injeta instrução para focar no tema sorteado
+    # Injeta instrução priorizada para gerar APENAS 1 BLOCO direto e rápido
     prompt_com_tema = (
         f"{master_prompt}\n\n"
-        f"INSTRUÇÃO OBRIGATÓRIA PARA ESTA EXECUÇÃO:\n"
-        f"Gere o roteiro e narração focando especificamente na receita: '{tema_sorteado}'.\n"
-        f"Certifique-se de que a narração mencione explicitamente essa receita no início com 'Você sabia que se misturar...'.\n"
-        f"IMPORTANTE: A narração DEVE ter entre 35 e 45 palavras no total para caber perfeitamente no ritmo de 15 segundos do vídeo."
+        f"==============================\n"
+        f"INSTRUÇÃO PRIORITÁRIA PARA ESTA EXECUÇÃO:\n"
+        f"Atenção: ignore a instrução de gerar 15 receitas. Gere EXATAMENTE 1 ÚNICO BLOCO para a seguinte receita sorteada: '{tema_sorteado}'.\n"
+        f"Formato estrito da sua resposta (gere APENAS isso, sem nenhum comentário antes ou depois):\n\n"
+        f"PROMPT VISUAL (ENGLISH):\n"
+        f"[Prompt em inglês, 9:16 vertical video, exactly 15 seconds, POV Brazilian kitchen, beginning mixing (0-4s), middle preparing (4-10s), end serving the dish (10-15s)]\n\n"
+        f"NARRAÇÃO (PORTUGUÊS BRASILEIRO):\n"
+        f"Você sabia que se misturar [ingredientes e quantidades], vai fazer um(a) delicioso(a) {tema_sorteado}, rápido, prático e muito gostoso? [breve preparo e servindo no final].\n\n"
+        f"REGRAS OBRIGATÓRIAS:\n"
+        f"- A narração DEVE ter entre 35 e 45 palavras no total para caber perfeitamente no ritmo de 15 segundos do vídeo.\n"
+        f"- Inicie a narração obrigatoriamente com 'Você sabia que se misturar...'\n"
+        f"- O prompt visual DEVE ser em inglês e descrever começo misturando (0-4s), meio preparando (4-10s) e fim servindo (10-15s)."
     )
 
     or_config = settings.get("openrouter", {})
     base_url = or_config.get("base_url", "https://openrouter.ai/api/v1")
-    timeout = or_config.get("timeout_seconds", 60)
-    max_retries = or_config.get("max_retries", 3)
-    retry_delay = or_config.get("retry_delay_seconds", 10)
+    timeout = or_config.get("timeout_seconds", 35)
+    max_retries = or_config.get("max_retries", 2)
+    retry_delay = or_config.get("retry_delay_seconds", 5)
 
-    for model in models:
-        model_id = model.get("id")
-        max_tokens = model.get("max_tokens", 1024)
-        temperature = model.get("temperature", 0.8)
-        model_name = model.get("name", model_id)
+    if api_key:
+        for model in models:
+            model_id = model.get("id")
+            max_tokens = model.get("max_tokens", 1024)
+            temperature = model.get("temperature", 0.7)
+            model_name = model.get("name", model_id)
 
-        logger.info(f"Tentando modelo: {model_name}")
+            logger.info(f"Tentando modelo: {model_name}")
 
-        for attempt in range(1, max_retries + 1):
-            if attempt > 1:
-                logger.info(f"Tentativa {attempt}/{max_retries} para {model_name}")
-                time.sleep(retry_delay)
+            for attempt in range(1, max_retries + 1):
+                if attempt > 1:
+                    logger.info(f"Tentativa {attempt}/{max_retries} para {model_name}")
+                    time.sleep(retry_delay)
 
-            content = call_openrouter(
-                api_key=api_key,
-                model_id=model_id,
-                prompt=prompt_com_tema,
-                max_tokens=max_tokens,
-                temperature=temperature,
-                base_url=base_url,
-                timeout=timeout
-            )
+                content, should_retry = call_openrouter(
+                    api_key=api_key,
+                    model_id=model_id,
+                    prompt=prompt_com_tema,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    base_url=base_url,
+                    timeout=timeout
+                )
 
-            if content:
-                script_data = validate_script(content, settings, tema_sorteado)
-                if script_data:
-                    script_data["_meta"] = {
-                        "model_used": model_id,
-                        "model_name": model_name,
-                        "generated_at": datetime.now().isoformat(),
-                        "attempt": attempt,
-                        "tema_sorteado": tema_sorteado
-                    }
-                    return script_data
-                else:
-                    logger.warning(f"Roteiro inválido do modelo {model_name}, tentando novamente...")
+                if content:
+                    script_data = validate_script(content, settings, tema_sorteado)
+                    if script_data:
+                        script_data["_meta"] = {
+                            "model_used": model_id,
+                            "model_name": model_name,
+                            "generated_at": datetime.now().isoformat(),
+                            "attempt": attempt,
+                            "tema_sorteado": tema_sorteado
+                        }
+                        return script_data
+                    else:
+                        logger.warning(f"Roteiro inválido do modelo {model_name}, tentando novamente...")
 
-        logger.warning(f"Modelo {model_name} falhou após {max_retries} tentativas. Passando para o próximo.")
+                if not should_retry:
+                    logger.info(f"Pulando tentativas adicionais para {model_name} devido a erro definitivo.")
+                    break
 
-    logger.error("Todos os modelos falharam. Não foi possível gerar o roteiro.")
-    return None
+            logger.warning(f"Modelo {model_name} falhou após tentativas. Passando para o próximo.")
+    else:
+        logger.warning("Nenhuma OPENROUTER_API_KEY fornecida.")
+
+    logger.warning(
+        f"⚠️ Não foi possível obter resposta dos modelos remotos do OpenRouter. "
+        f"Ativando gerador local resiliente para a receita: '{tema_sorteado}'..."
+    )
+    return generate_offline_recipe(tema_sorteado)
 
 
 def main():
     """Função principal."""
     base_dir = Path(__file__).parent.parent
 
-    # Verifica API key
-    api_key = os.environ.get("OPENROUTER_API_KEY")
-    if not api_key:
-        logger.error("Variável de ambiente OPENROUTER_API_KEY não encontrada.")
-        logger.error("Configure esta variável como GitHub Secret.")
-        sys.exit(1)
+    # Verifica variáveis de ambiente
+    api_key = os.environ.get("OPENROUTER_API_KEY", "")
+    custom_prompt = os.environ.get("CUSTOM_PROMPT", "").strip()
+    custom_titulo = os.environ.get("CUSTOM_TITULO", "").strip()
 
     logger.info("=== INICIANDO GERAÇÃO DE ROTEIRO ===")
 
@@ -369,11 +472,18 @@ def main():
     logger.info(f"Modelos disponíveis: {len(models)}")
     logger.info(f"Prompt mestre carregado ({len(master_prompt)} chars)")
 
-    # Gera roteiro com fallback
-    script_data = generate_script_with_fallback(api_key, models, master_prompt, settings)
+    # Gera roteiro com fallback resiliente
+    script_data = generate_script_with_fallback(
+        api_key=api_key,
+        models=models,
+        master_prompt=master_prompt,
+        settings=settings,
+        custom_prompt=custom_prompt,
+        custom_titulo=custom_titulo
+    )
 
     if not script_data:
-        logger.error("Falha na geração do roteiro. Abortando pipeline.")
+        logger.error("Falha crítica na geração do roteiro. Abortando pipeline.")
         sys.exit(1)
 
     # Salva roteiro

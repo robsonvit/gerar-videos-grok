@@ -40,9 +40,9 @@
   },
   "openrouter": {
     "base_url": "https://openrouter.ai/api/v1",
-    "timeout_seconds": 60,
-    "max_retries": 3,
-    "retry_delay_seconds": 10
+    "timeout_seconds": 35,
+    "max_retries": 2,
+    "retry_delay_seconds": 5
   },
   "output": {
     "scripts_dir": "output/scripts",

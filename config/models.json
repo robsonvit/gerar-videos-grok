@@ -1,65 +1,65 @@
 {
-  "comment": "Lista de modelos gratuitos do OpenRouter em ordem de prioridade. Todos os modelos são 100% gratuitos ($0 input/$0 output). Nenhum modelo pago incluído.",
+  "comment": "Lista de modelos gratuitos ativos do OpenRouter em ordem de prioridade. Todos os modelos são 100% gratuitos ($0 input/$0 output).",
   "models": [
     {
-      "id": "nvidia/nemotron-3-ultra-550b-a55b:free",
-      "name": "NVIDIA: Nemotron 3 Ultra (Free)",
-      "max_tokens": 2048,
-      "temperature": 0.8
-    },
-    {
-      "id": "nvidia/nemotron-3-super-120b-a12b:free",
-      "name": "NVIDIA: Nemotron 3 Super (Free)",
-      "max_tokens": 2048,
-      "temperature": 0.8
+      "id": "openrouter/free",
+      "name": "OpenRouter: Free Models Router",
+      "max_tokens": 1024,
+      "temperature": 0.7
     },
     {
       "id": "nvidia/nemotron-3.5-lightning:free",
       "name": "NVIDIA: Nemotron 3.5 Lightning (Free)",
-      "max_tokens": 2048,
-      "temperature": 0.8
+      "max_tokens": 1024,
+      "temperature": 0.7
     },
     {
-      "id": "poolside/laguna-s-2.1:free",
-      "name": "Poolside: Laguna S 2.1 (Free)",
-      "max_tokens": 2048,
-      "temperature": 0.8
+      "id": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
+      "name": "NVIDIA: Nemotron 3 Nano Omni (Free)",
+      "max_tokens": 1024,
+      "temperature": 0.7
     },
     {
-      "id": "poolside/laguna-xs-2.1:free",
-      "name": "Poolside: Laguna XS 2.1 (Free)",
-      "max_tokens": 2048,
-      "temperature": 0.8
+      "id": "liquid/lfm-2.5-2.6b:free",
+      "name": "LiquidAI: LFM 2.5 2.6B (Free)",
+      "max_tokens": 1024,
+      "temperature": 0.7
+    },
+    {
+      "id": "xingchen-agi/xing4.0-29b-a4b:free",
+      "name": "XingChen: Xing 4.0 29B (Free)",
+      "max_tokens": 1024,
+      "temperature": 0.7
+    },
+    {
+      "id": "dots-studio/dots-3-note-preview:free",
+      "name": "Dots Studio: Dots 3 Note Preview (Free)",
+      "max_tokens": 1024,
+      "temperature": 0.7
+    },
+    {
+      "id": "google/gemma-4-26b-a4b-it:free",
+      "name": "Google: Gemma 4 26B (Free)",
+      "max_tokens": 1024,
+      "temperature": 0.7
     },
     {
       "id": "google/gemma-4-31b-it:free",
       "name": "Google: Gemma 4 31B (Free)",
-      "max_tokens": 2048,
-      "temperature": 0.8
+      "max_tokens": 1024,
+      "temperature": 0.7
     },
     {
-      "id": "google/gemma-4-26b-a4b-it:free",
-      "name": "Google: Gemma 4 26B A4B (Free)",
-      "max_tokens": 2048,
-      "temperature": 0.8
+      "id": "recursive/flint-v1.0:free",
+      "name": "Recursive: Flint v1.0 (Free)",
+      "max_tokens": 1024,
+      "temperature": 0.7
     },
     {
-      "id": "cohere/north-mini-code:free",
-      "name": "Cohere: North Mini Code (Free)",
-      "max_tokens": 2048,
-      "temperature": 0.8
-    },
-    {
-      "id": "thinkingmachines/inkling:free",
-      "name": "Thinking Machines: Inkling (Free)",
-      "max_tokens": 2048,
-      "temperature": 0.8
-    },
-    {
-      "id": "thinkingmachines/inkling-small:free",
-      "name": "Thinking Machines: Inkling Small (Free)",
-      "max_tokens": 2048,
-      "temperature": 0.8
+      "id": "nvidia/nemotron-3-ultra-550b-a55b:free",
+      "name": "NVIDIA: Nemotron 3 Ultra (Free)",
+      "max_tokens": 1024,
+      "temperature": 0.7
     }
   ]
 }
