@@ -1,6 +1,6 @@
 {
   "video": {
-    "target_duration_seconds": 15,
+    "target_duration_seconds": 6,
     "format": "mp4",
     "resolution": "720p",
     "aspect_ratio": "9:16",

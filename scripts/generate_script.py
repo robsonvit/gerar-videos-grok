@@ -364,7 +364,7 @@ def validate_script(content: str, settings: dict, tema_sugerido: str = "") -> di
         return None
 
     palavras_narracao = narracao.split()
-    if len(palavras_narracao) < 25:
+    if len(palavras_narracao) < 20:
         logger.warning(f"Roteiro rejeitado: narração muito curta ({len(palavras_narracao)} palavras).")
         return None
 

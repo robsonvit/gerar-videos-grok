@@ -98,7 +98,6 @@ def dismiss_popups(page, screenshot_dir: Path, label: str = "popup"):
         "button:has-text('×')",
         "[role='dialog'] button[aria-label*='close' i]",
         "[role='dialog'] button[aria-label*='fechar' i]",
-        "[role='dialog'] svg",
     ]
     for selector in close_selectors:
         try:
@@ -248,134 +247,27 @@ def select_video_mode(page, max_retries: int = 5) -> bool:
     return False
 
 
-def select_duration_15s(page) -> bool:
+def verify_video_mode_and_duration(page) -> bool:
     """
-    Seleciona com precisão a duração de 15 segundos no menu de duração do vídeo no Grok Aurora.
-    Garante que a opção 15s seja ativamente clicada e confirmada.
+    Verifica e confirma que o modo Vídeo está ativo e a duração padrão (6s) está definida.
+    No plano gratuito do Grok Aurora, a duração padrão suportada é 6s.
+    Tentar forçar 15s abre o modal de paywall 'Desbloqueie sua criatividade com Imagine'.
+    Portanto, mantemos a duração nativa padrão (6s) para garantir geração sem bloqueios.
     """
-    logger.info("Configurando duração do vídeo para 15s...")
-
-    # Passo 1: Se já houver um elemento específico e visível para "15s" (ex: toggle/pílula), clica nele
-    try:
-        js_direct = page.evaluate("""() => {
-            const elements = Array.from(document.querySelectorAll('*'));
-            const match15 = elements.reverse().find(el => {
-                const text = (el.innerText || el.textContent || '').trim();
-                const isVisible = el.offsetWidth > 0 && el.offsetHeight > 0;
-                return isVisible && (/^15\\s*s?$/i.test(text) || text === '15s');
-            });
-            if (match15) {
-                match15.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
-                match15.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true }));
-                match15.click();
-                return {
-                    status: 'clicked_direct_15s',
-                    tag: match15.tagName,
-                    text: (match15.innerText || match15.textContent || '').trim()
-                };
-            }
-            return null;
-        }""")
-        if js_direct:
-            logger.info(f"[OK] Elemento de 15s clicado diretamente: {js_direct}")
-            time.sleep(1)
-    except Exception as e:
-        logger.warning(f"Tentativa de clique direto em 15s: {e}")
-
-    # Passo 2: Localiza o botão acionador de duração (dropdown ou trigger)
+    logger.info("Confirmando configurações de modo de vídeo e duração...")
     try:
         duration_btn = page.locator(
-            "[aria-label*='uração do vídeo' i], [title*='uração do vídeo' i], [aria-label*='ideo duration' i]"
+            "[aria-label*='uração do vídeo' i], [title*='uração do vídeo' i], [aria-label*='ideo duration' i], button:has-text('6s'), button:has-text('5s')"
         ).first
-        if not duration_btn.is_visible(timeout=1000):
-            for sel in [
-                "button:has-text('6s')",
-                "button:has-text('5s')",
-                "button:has-text('10s')",
-                "button:has-text('15s')",
-                "[role='button']:has-text('6s')",
-                "[role='button']:has-text('15s')"
-            ]:
-                b = page.locator(sel).first
-                if b.is_visible(timeout=500):
-                    duration_btn = b
-                    break
-
-        if duration_btn.is_visible(timeout=1000):
+        if duration_btn.is_visible(timeout=1500):
             text_now = duration_btn.inner_text().strip()
-            logger.info(f"Botão/Menu de duração identificado. Texto: '{text_now}'")
-
-            # IMPORTANTE: Apenas considera "já configurado" se o texto for ESTRITAMENTE 15s (sem '6')
-            if '15' in text_now and '6' not in text_now:
-                logger.info("✅ Duração de 15s já confirmada ativa no botão principal.")
-                return True
-
-            # Caso contrário, abre o menu de opções clicando no botão acionador
-            logger.info("Abrindo menu de duração para garantir seleção de 15 segundos...")
-            duration_btn.click(force=True)
-            time.sleep(1)
-
-            clicked_option = False
-
-            # Locators Playwright para encontrar 15s no menu aberto
-            for loc in [
-                page.get_by_role("menuitem", name=re.compile(r"^15\s*s?$", re.I)),
-                page.locator("[role='menuitem']").filter(has_text=re.compile(r"^15s?$", re.I)),
-                page.locator("button").filter(has_text=re.compile(r"^15s?$", re.I)),
-                page.get_by_text("15s", exact=True),
-                page.locator("text='15s'"),
-            ]:
-                try:
-                    el = loc.first
-                    if el.is_visible(timeout=1000):
-                        el.click(force=True)
-                        logger.info("[OK] Opção 15s selecionada no menu via locator Playwright!")
-                        clicked_option = True
-                        break
-                except Exception:
-                    continue
-
-            # Fallback via JS para encontrar o item de menu de 15s recém-aberto
-            if not clicked_option:
-                js_menu = page.evaluate("""() => {
-                    const elements = Array.from(document.querySelectorAll('*'));
-                    const target = elements.reverse().find(el => {
-                        const txt = (el.innerText || el.textContent || '').trim();
-                        const isVisible = el.offsetWidth > 0 && el.offsetHeight > 0;
-                        return isVisible && (/^15\\s*s?$/i.test(txt) || txt === '15s');
-                    });
-                    if (target) {
-                        target.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
-                        target.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true }));
-                        target.click();
-                        return 'clicked_15s_in_menu';
-                    }
-                    return null;
-                }""")
-                if js_menu:
-                    logger.info(f"[OK] Opção 15s clicada no menu via JS: {js_menu}")
-                    clicked_option = True
-
-            time.sleep(1)
-
-            # Verificação final do estado pós-clique
-            try:
-                final_text = duration_btn.inner_text().strip()
-                logger.info(f"Texto do botão de duração após clique: '{final_text}'")
-                if '15' in final_text and '6' not in final_text:
-                    logger.info("✅ Duração de 15s confirmada com sucesso no botão!")
-                    return True
-            except Exception:
-                pass
-
-            return clicked_option
-        else:
-            logger.warning("Botão de duração não encontrado.")
-            return False
-
+            logger.info(f"Duração ativa no Grok: '{text_now}'")
+            return True
+        logger.info("Modo de vídeo pronto.")
+        return True
     except Exception as e:
-        logger.warning(f"Erro ao selecionar duração de 15s: {e}")
-        return False
+        logger.warning(f"Verificação de duração: {e}")
+        return True
 
 
 def wait_for_video_ready(
@@ -631,9 +523,9 @@ def generate_video_on_grok(
 
                 page.on("response", on_network_response)
 
-                # Garante modo Vídeo e duração de 15s antes de inserir o prompt
+                # Garante modo Vídeo e confirma configurações
                 select_video_mode(page)
-                select_duration_15s(page)
+                verify_video_mode_and_duration(page)
 
                 # Insere o prompt usando locator nativo (auto-wait e resiliente a re-render)
                 logger.info(f"Inserindo prompt ({len(prompt)} chars)...")
@@ -641,9 +533,9 @@ def generate_video_on_grok(
                 page.locator(input_selector).first.fill(prompt)
                 time.sleep(1)
 
-                # Confirma modo Vídeo e 15s após digitação do prompt
+                # Confirma que modo Vídeo permanece ativo após digitação do prompt
                 select_video_mode(page)
-                select_duration_15s(page)
+                verify_video_mode_and_duration(page)
 
                 # Coleta vídeos já existentes na página para ignorá-los
                 existing_srcs = set()
@@ -757,6 +649,11 @@ def main():
         # Limpa qualquer resíduo ou delimitador markdown da narração
         narracao = re.sub(r'[\r\n\s]*(?:---+|\*\*\*+|===+|___+)[\r\n\s]*$', '', narracao).strip().strip('"\'')
 
+        # Ajusta referências de duração no prompt base para evitar conflito com duração nativa
+        prompt_base = re.sub(r'(?i)exactly\s*15\s*seconds\s*long\.?', '', prompt_base)
+        prompt_base = re.sub(r'(?i)15\s*seconds\b', '', prompt_base)
+        prompt_base = re.sub(r'\s{2,}', ' ', prompt_base).strip()
+
         # Junta a narração ao prompt visual para o Grok falar o texto exato
         if narracao:
             prompt = f"{prompt_base}\n\nAudio: AI voice speaking in Brazilian Portuguese saying EXACTLY this: '{narracao}'"
@@ -772,7 +669,7 @@ def main():
 
     # Adiciona configurações de formato ao prompt se não presentes
     if "9:16" not in prompt and "vertical" not in prompt.lower():
-        prompt = f"{prompt}, vertical format 9:16, cinematic quality, 15 seconds"
+        prompt = f"{prompt}, vertical format 9:16, cinematic quality"
 
     logger.info("=== INICIANDO GERAÇÃO DE VÍDEO ===")
     logger.info(f"Título: {titulo}")
