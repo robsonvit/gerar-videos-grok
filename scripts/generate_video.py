@@ -252,88 +252,129 @@ def select_video_mode(page, max_retries: int = 5) -> bool:
 
 
 def select_duration_15s(page) -> bool:
-    """Seleciona a duração de 15 segundos no menu de duração do vídeo."""
+    """
+    Seleciona com precisão a duração de 15 segundos no menu de duração do vídeo no Grok Aurora.
+    Garante que a opção 15s seja ativamente clicada e confirmada.
+    """
     logger.info("Configurando duração do vídeo para 15s...")
+
+    # Passo 1: Se já houver um elemento específico e visível para "15s" (ex: toggle/pílula), clica nele
+    try:
+        js_direct = page.evaluate("""() => {
+            const elements = Array.from(document.querySelectorAll('*'));
+            const match15 = elements.reverse().find(el => {
+                const text = (el.innerText || el.textContent || '').trim();
+                const isVisible = el.offsetWidth > 0 && el.offsetHeight > 0;
+                return isVisible && (/^15\\s*s?$/i.test(text) || text === '15s');
+            });
+            if (match15) {
+                match15.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+                match15.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true }));
+                match15.click();
+                return {
+                    status: 'clicked_direct_15s',
+                    tag: match15.tagName,
+                    text: (match15.innerText || match15.textContent || '').trim()
+                };
+            }
+            return null;
+        }""")
+        if js_direct:
+            logger.info(f"[OK] Elemento de 15s clicado diretamente: {js_direct}")
+            time.sleep(1)
+    except Exception as e:
+        logger.warning(f"Tentativa de clique direto em 15s: {e}")
+
+    # Passo 2: Localiza o botão acionador de duração (dropdown ou trigger)
     try:
         duration_btn = page.locator(
             "[aria-label*='uração do vídeo' i], [title*='uração do vídeo' i], [aria-label*='ideo duration' i]"
         ).first
-        if not duration_btn.is_visible(timeout=2000):
-            fallback_btn = page.locator(
-                "button:has-text('5s'), button:has-text('6s'), button:has-text('10s'), button:has-text('15s')"
-            ).first
-            if fallback_btn.is_visible(timeout=2000):
-                duration_btn = fallback_btn
+        if not duration_btn.is_visible(timeout=1000):
+            for sel in [
+                "button:has-text('6s')",
+                "button:has-text('5s')",
+                "button:has-text('10s')",
+                "button:has-text('15s')",
+                "[role='button']:has-text('6s')",
+                "[role='button']:has-text('15s')"
+            ]:
+                b = page.locator(sel).first
+                if b.is_visible(timeout=500):
+                    duration_btn = b
+                    break
 
-        if not duration_btn.is_visible(timeout=2000):
+        if duration_btn.is_visible(timeout=1000):
+            text_now = duration_btn.inner_text().strip()
+            logger.info(f"Botão/Menu de duração identificado. Texto: '{text_now}'")
+
+            # IMPORTANTE: Apenas considera "já configurado" se o texto for ESTRITAMENTE 15s (sem '6')
+            if '15' in text_now and '6' not in text_now:
+                logger.info("✅ Duração de 15s já confirmada ativa no botão principal.")
+                return True
+
+            # Caso contrário, abre o menu de opções clicando no botão acionador
+            logger.info("Abrindo menu de duração para garantir seleção de 15 segundos...")
+            duration_btn.click(force=True)
+            time.sleep(1)
+
+            clicked_option = False
+
+            # Locators Playwright para encontrar 15s no menu aberto
+            for loc in [
+                page.get_by_role("menuitem", name=re.compile(r"^15\s*s?$", re.I)),
+                page.locator("[role='menuitem']").filter(has_text=re.compile(r"^15s?$", re.I)),
+                page.locator("button").filter(has_text=re.compile(r"^15s?$", re.I)),
+                page.get_by_text("15s", exact=True),
+                page.locator("text='15s'"),
+            ]:
+                try:
+                    el = loc.first
+                    if el.is_visible(timeout=1000):
+                        el.click(force=True)
+                        logger.info("[OK] Opção 15s selecionada no menu via locator Playwright!")
+                        clicked_option = True
+                        break
+                except Exception:
+                    continue
+
+            # Fallback via JS para encontrar o item de menu de 15s recém-aberto
+            if not clicked_option:
+                js_menu = page.evaluate("""() => {
+                    const elements = Array.from(document.querySelectorAll('*'));
+                    const target = elements.reverse().find(el => {
+                        const txt = (el.innerText || el.textContent || '').trim();
+                        const isVisible = el.offsetWidth > 0 && el.offsetHeight > 0;
+                        return isVisible && (/^15\\s*s?$/i.test(txt) || txt === '15s');
+                    });
+                    if (target) {
+                        target.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+                        target.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true }));
+                        target.click();
+                        return 'clicked_15s_in_menu';
+                    }
+                    return null;
+                }""")
+                if js_menu:
+                    logger.info(f"[OK] Opção 15s clicada no menu via JS: {js_menu}")
+                    clicked_option = True
+
+            time.sleep(1)
+
+            # Verificação final do estado pós-clique
+            try:
+                final_text = duration_btn.inner_text().strip()
+                logger.info(f"Texto do botão de duração após clique: '{final_text}'")
+                if '15' in final_text and '6' not in final_text:
+                    logger.info("✅ Duração de 15s confirmada com sucesso no botão!")
+                    return True
+            except Exception:
+                pass
+
+            return clicked_option
+        else:
             logger.warning("Botão de duração não encontrado.")
             return False
-
-        text_now = duration_btn.inner_text().strip()
-        logger.info(f"Botão de duração encontrado. Valor atual: '{text_now}'")
-        if '15' in text_now:
-            logger.info("Duração já está configurada para 15s.")
-            return True
-
-        # Abre o menu de duração
-        duration_btn.click(force=True)
-        logger.info("Menu de duração aberto. Aguardando opções...")
-        time.sleep(1)
-
-        clicked = False
-
-        # Estratégia 1: Locators individuais válidos no Playwright (sem sintaxe inválida de vírgula)
-        menu_locators = [
-            page.locator("[role='menuitem']").filter(has_text="15s"),
-            page.locator("button").filter(has_text="15s"),
-            page.get_by_role("menuitem", name="15s"),
-            page.get_by_text("15s", exact=True),
-            page.locator("text='15s'"),
-        ]
-
-        for loc in menu_locators:
-            try:
-                el = loc.last
-                if el.is_visible(timeout=1500):
-                    el.click(force=True)
-                    logger.info("[OK] Duração de 15s clicada via locator Playwright!")
-                    clicked = True
-                    break
-            except Exception:
-                continue
-
-        # Estratégia 2: Fallback direto via JavaScript (busca elementos visíveis com texto 15s)
-        if not clicked:
-            js_res = page.evaluate("""() => {
-                const elements = Array.from(document.querySelectorAll('*'));
-                const target = elements.reverse().find(el => {
-                    const txt = (el.innerText || el.textContent || '').trim();
-                    const isVisible = el.offsetWidth > 0 && el.offsetHeight > 0;
-                    return isVisible && (txt === '15s' || txt === '15 s' || txt === '15 seg');
-                });
-                if (target) {
-                    target.click();
-                    return 'clicked_exact_15s';
-                }
-                return null;
-            }""")
-            if js_res:
-                logger.info(f"[OK] Duração de 15s clicada via JS: {js_res}")
-                clicked = True
-
-        time.sleep(1)
-
-        # Confirmação pós-seleção: verifica se o botão agora reflete 15s
-        try:
-            confirmed_text = duration_btn.inner_text().strip()
-            logger.info(f"Valor atual do botão de duração após seleção: '{confirmed_text}'")
-            if '15' in confirmed_text:
-                logger.info("[OK] Duração de 15s confirmada com sucesso!")
-                return True
-        except Exception:
-            pass
-
-        return clicked
 
     except Exception as e:
         logger.warning(f"Erro ao selecionar duração de 15s: {e}")
