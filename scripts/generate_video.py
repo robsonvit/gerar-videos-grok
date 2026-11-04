@@ -79,14 +79,44 @@ def dismiss_popups(page, screenshot_dir: Path, label: str = "popup"):
     """
     dismissed = False
 
-    # Estratégia 1: Pressiona Escape (método mais limpo para modais React/Radix UI)
+    # Estratégia 1: Fecha via botão X específico no topo direito de modais
     try:
-        page.keyboard.press("Escape")
-        time.sleep(0.3)
+        closed = page.evaluate("""() => {
+            let count = 0;
+            document.querySelectorAll('[role="dialog"], dialog').forEach(dialog => {
+                const buttons = Array.from(dialog.querySelectorAll('button'));
+                const closeBtn = buttons.find(b => {
+                    const txt = (b.innerText || '').trim().toLowerCase();
+                    const aria = (b.getAttribute('aria-label') || '').toLowerCase();
+                    if (txt === 'x' || txt === '✕' || txt === '×' || aria.includes('close') || aria.includes('fechar')) return true;
+                    const rect = b.getBoundingClientRect();
+                    const dRect = dialog.getBoundingClientRect();
+                    return (rect.top - dRect.top < 80) && (dRect.right - rect.right < 80);
+                });
+                if (closeBtn) {
+                    try { closeBtn.click(); count++; } catch (e) {}
+                }
+            });
+            return count;
+        }""")
+        if closed > 0:
+            logger.info(f"Botão de fechar acionado em {closed} modal(is)")
+            dismissed = True
+            time.sleep(0.5)
     except Exception:
         pass
 
-    # Estratégia 2: Clica estritamente em botões de fechar (X / Close / Fechar)
+    # Estratégia 2: Se ainda houver dialog visível, pressiona Escape
+    try:
+        dialog = page.query_selector("[role='dialog'], dialog")
+        if dialog and dialog.is_visible():
+            page.keyboard.press("Escape")
+            time.sleep(0.5)
+            dismissed = True
+    except Exception:
+        pass
+
+    # Estratégia 3: Seletores adicionais de botões de fechar comuns
     close_selectors = [
         "button[aria-label='Close']",
         "button[aria-label='Fechar']",
@@ -96,8 +126,6 @@ def dismiss_popups(page, screenshot_dir: Path, label: str = "popup"):
         "[data-testid='close-button']",
         "button:has-text('✕')",
         "button:has-text('×')",
-        "[role='dialog'] button[aria-label*='close' i]",
-        "[role='dialog'] button[aria-label*='fechar' i]",
     ]
     for selector in close_selectors:
         try:
@@ -111,53 +139,9 @@ def dismiss_popups(page, screenshot_dir: Path, label: str = "popup"):
         except Exception:
             continue
 
-    # Estratégia 3: Remoção direta via JavaScript apenas de overlays e botões de fechar
-    try:
-        removed_count = page.evaluate("""() => {
-            let count = 0;
-            // 1. Tenta clicar em botões de fechar dentro do dialog
-            document.querySelectorAll('[role="dialog"], dialog').forEach(d => {
-                d.querySelectorAll('button').forEach(b => {
-                    const txt = (b.innerText || '').toLowerCase();
-                    const aria = (b.getAttribute('aria-label') || '').toLowerCase();
-                    if (txt.includes('fechar') || txt.includes('close') || aria.includes('close') || aria.includes('fechar') || txt === '✕' || txt === '×') {
-                        try { b.click(); count++; } catch (e) {}
-                    }
-                });
-            });
-            // 2. Remove modais de anúncio ou overlays que bloqueiem cliques
-            document.querySelectorAll('div[class*="backdrop"], div[class*="overlay"]').forEach(el => {
-                el.remove();
-                count++;
-            });
-            // 3. Restaura pointer-events e overflow da página caso tenham sido travados
-            if (document.body) {
-                document.body.style.pointerEvents = 'auto';
-                document.body.style.overflow = 'auto';
-            }
-            return count;
-        }""")
-        if removed_count > 0:
-            logger.info(f"Remoção via JS eliminou/acionou {removed_count} elemento(s) de modal/backdrop")
-            dismissed = True
-    except Exception as e:
-        logger.warning(f"Falha na remoção de popup via JS: {e}")
-
     if dismissed:
         logger.info("✅ Popup/modal fechado/removido com sucesso")
         time.sleep(0.5)
-
-    # Verifica se ainda há modal visível
-    try:
-        modal = page.query_selector("[role='dialog']")
-        if modal and modal.is_visible():
-            logger.warning("Modal ainda visível após todas as tentativas")
-            take_screenshot(page, screenshot_dir, f"{label}_modal_persistente")
-        else:
-            if dismissed:
-                logger.info("✅ Popup/modal fechado/removido com sucesso")
-    except Exception:
-        pass
 
 
 def select_video_mode(page, max_retries: int = 5) -> bool:
@@ -334,7 +318,36 @@ def wait_for_video_ready(
                 except Exception:
                     pass
 
-            # Verifica se há mensagem de erro na página
+            # Verifica se há mensagem de erro ou paywall na página
+            paywall_info = page.evaluate("""() => {
+                const text = (document.body ? document.body.innerText : '').toLowerCase();
+                const hasPaywall = text.includes('desbloqueie sua criatividade') ||
+                                   text.includes('obter plus') ||
+                                   text.includes('resgatar oferta') ||
+                                   text.includes('cota de uso de ia') ||
+                                   text.includes('unlock your creativity');
+                return {
+                    hasPaywall: hasPaywall
+                };
+            }""")
+
+            if paywall_info and paywall_info.get("hasPaywall"):
+                logger.warning("Modal de paywall/assinatura detectado na página!")
+                take_screenshot(page, screenshot_dir, "paywall_detected")
+                dismiss_popups(page, screenshot_dir, "paywall_dismiss")
+                time.sleep(2)
+
+                # Verifica se a geração está ativa no background
+                is_generating = page.evaluate("""() => {
+                    const text = (document.body ? document.body.innerText : '').toLowerCase();
+                    return text.includes('gerando') || text.includes('generating') || /\\b\\d+%/i.test(text);
+                }""")
+
+                if not is_generating and not captured_urls:
+                    logger.error("🚨 Geração bloqueada pelo Grok: Cota gratuita diária esgotada ou exigência de assinatura Plus/Super ('Desbloqueie sua criatividade com Imagine').")
+                    take_screenshot(page, screenshot_dir, "quota_exceeded")
+                    return None
+
             error_texts = [
                 "Something went wrong",
                 "Error generating",
@@ -555,12 +568,23 @@ def generate_video_on_grok(
 
                 # Envia o prompt
                 logger.info("Enviando prompt...")
+                submitted = False
                 try:
-                    send_btn = page.locator("button[type='submit'], button[aria-label*='Send' i], button[aria-label*='Enviar' i]").first
-                    if send_btn.is_visible(timeout=2000):
+                    send_btn = page.locator("button[type='submit'], button[aria-label*='Send' i], button[aria-label*='Enviar' i], button[aria-label*='Gerar' i]").first
+                    if send_btn.is_visible(timeout=1500):
                         send_btn.click(force=True)
-                    else:
+                        submitted = True
+                        logger.info("Botão de envio acionado via locator.")
+                except Exception:
+                    pass
+
+                # Garante envio focando o campo de texto e pressionando Enter
+                try:
+                    input_field = page.locator(input_selector).first
+                    if input_field.is_visible(timeout=1000):
+                        input_field.focus()
                         page.keyboard.press("Enter")
+                        logger.info("Tecla Enter acionada no campo de prompt.")
                 except Exception:
                     page.keyboard.press("Enter")
 
@@ -568,6 +592,9 @@ def generate_video_on_grok(
 
                 if screenshot_on_error:
                     take_screenshot(page, screenshot_dir, f"after_submit_attempt{attempt}")
+
+                # Se abriu paywall ou popup logo após envio, tenta fechar imediatamente
+                dismiss_popups(page, screenshot_dir, f"after_submit_popup_attempt{attempt}")
 
                 # Aguarda vídeo ficar pronto
                 video_src = wait_for_video_ready(

@@ -21,10 +21,10 @@
   "generation": {
     "service": "grok",
     "url": "https://grok.com/imagine",
-    "timeout_seconds": 600,
-    "poll_interval_seconds": 15,
-    "max_retries": 3,
-    "retry_delay_seconds": 30,
+    "timeout_seconds": 240,
+    "poll_interval_seconds": 10,
+    "max_retries": 2,
+    "retry_delay_seconds": 15,
     "screenshot_on_error": true,
     "headless": true
   },
