@@ -46,12 +46,12 @@ def load_script(script_path: str) -> dict:
 
 
 def take_screenshot(page, output_dir: Path, label: str):
-    """Captura screenshot para diagnóstico."""
+    """Captura screenshot para diagnóstico (sem travar em fontes ou scroll infinito)."""
     try:
         output_dir.mkdir(parents=True, exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         screenshot_path = output_dir / f"screenshot_{label}_{timestamp}.png"
-        page.screenshot(path=str(screenshot_path), full_page=True)
+        page.screenshot(path=str(screenshot_path), timeout=5000)
         logger.info(f"Screenshot salvo: {screenshot_path}")
     except Exception as e:
         logger.warning(f"Falha ao capturar screenshot: {e}")
@@ -75,30 +75,30 @@ def load_cookies_from_env() -> list | None:
 def dismiss_popups(page, screenshot_dir: Path, label: str = "popup"):
     """
     Fecha qualquer popup/modal que esteja bloqueando a interface do Grok.
-    Exemplos: 'Conheça o Bot do Grok', 'Shape your scene', 'Criar Projeto', banners de novidades, etc.
+    Exemplos: 'Conheça o Bot do Grok', 'Shape your scene', etc.
     """
     dismissed = False
 
-    # Estratégia 1: Remove cards flutuantes indesejados (Shape your scene, banners, modal de projeto) sem cliques cegos
+    # Estratégia 1: Remove cards promocionais flutuantes específicos sem cliques cegos
     try:
         removed = page.evaluate("""() => {
             let count = 0;
-            document.querySelectorAll('*').forEach(el => {
+            document.querySelectorAll('div').forEach(el => {
                 const txt = (el.innerText || '').toLowerCase();
-                if (txt.includes('shape your scene') || txt.includes('conheça o bot') || txt.includes('criar projeto') || txt.includes('novo projeto')) {
-                    const card = el.closest('div[class*="rounded"], div[class*="shadow"], div[class*="fixed"], [role="dialog"]') || el;
+                if (txt.includes('shape your scene') || txt.includes('conheça o bot')) {
+                    const card = el.closest('div[class*="fixed"], div[class*="absolute"]') || el;
                     try { card.remove(); count++; } catch (e) {}
                 }
             });
             return count;
         }""")
         if removed > 0:
-            logger.info(f"Removido(s) {removed} card(s)/modal(is) indesejados via DOM.")
+            logger.info(f"Removido(s) {removed} card(s) promocional(is) via DOM.")
             dismissed = True
     except Exception:
         pass
 
-    # Estratégia 2: Fecha via botão X específico no topo direito de modais
+    # Estratégia 2: Fecha via botão X específico de modais
     try:
         closed = page.evaluate("""() => {
             let count = 0;
@@ -107,10 +107,7 @@ def dismiss_popups(page, screenshot_dir: Path, label: str = "popup"):
                 const closeBtn = buttons.find(b => {
                     const txt = (b.innerText || '').trim().toLowerCase();
                     const aria = (b.getAttribute('aria-label') || '').toLowerCase();
-                    if (txt === 'x' || txt === '✕' || txt === '×' || aria.includes('close') || aria.includes('fechar')) return true;
-                    const rect = b.getBoundingClientRect();
-                    const dRect = dialog.getBoundingClientRect();
-                    return (rect.top - dRect.top < 80) && (dRect.right - rect.right < 80);
+                    return (txt === 'x' || txt === '✕' || txt === '×' || aria.includes('close') || aria.includes('fechar'));
                 });
                 if (closeBtn) {
                     try { closeBtn.click(); count++; } catch (e) {}
@@ -306,9 +303,9 @@ def wait_for_video_ready(
             if int(time.time() - start_time) > 30:
                 try:
                     page.evaluate("""() => {
-                        const playBtns = document.querySelectorAll("button[aria-label*='Play' i], button[aria-label*='Reproduzir' i], [role='button'] svg");
+                        const playBtns = document.querySelectorAll("button[aria-label*='Play' i], button[aria-label*='Reproduzir' i], video + button");
                         if (playBtns.length > 0) {
-                            try { playBtns[0].closest('button, [role=\"button\"]').click(); } catch (e) {}
+                            try { playBtns[0].click(); } catch (e) {}
                         }
                     }""")
                 except Exception:
@@ -539,7 +536,8 @@ def generate_video_on_grok(
                 # Insere o prompt usando locator nativo (auto-wait e resiliente a re-render)
                 logger.info(f"Inserindo prompt ({len(prompt)} chars)...")
                 input_selector = "textarea, [contenteditable='true']"
-                page.locator(input_selector).first.fill(prompt)
+                input_el = page.locator(input_selector).first
+                input_el.fill(prompt)
                 time.sleep(1)
 
                 # Confirma que modo Vídeo permanece ativo após digitação do prompt
@@ -558,43 +556,41 @@ def generate_video_on_grok(
                     pass
                 logger.info(f"Encontrados {len(existing_srcs)} vídeos antigos na página para ignorar.")
 
-                # Garante que nenhum popup novo apareceu antes do envio
-                dismiss_popups(page, screenshot_dir, f"before_submit_attempt{attempt}")
-                time.sleep(0.5)
-
                 # Envia o prompt
                 logger.info("Enviando prompt...")
                 submitted = False
 
-                # Localiza a barra/container principal do prompt
-                prompt_container = page.locator("div:has(textarea, [contenteditable='true'])").last
+                # 1. Tenta clicar no botão de envio
+                for sel in [
+                    "button[type='submit']",
+                    "button[aria-label*='Send' i]",
+                    "button[aria-label*='Enviar' i]",
+                    "button[aria-label*='Gerar' i]",
+                    "button:has(svg.lucide-arrow-up)",
+                ]:
+                    try:
+                        btn = page.locator(sel).first
+                        if btn.is_visible(timeout=1000):
+                            btn.click(force=True)
+                            submitted = True
+                            logger.info(f"Botão de envio clicado via seletor: {sel}")
+                            break
+                    except Exception:
+                        continue
 
-                # 1. Clica no botão de envio dentro do próprio container do prompt (evita botões externos de modais)
-                try:
-                    send_btn = prompt_container.locator("button:has(svg)").last
-                    if send_btn.is_visible(timeout=1500):
-                        send_btn.click(force=True)
-                        submitted = True
-                        logger.info("Botão de envio da barra de prompt clicado.")
-                except Exception:
-                    pass
-
-                # 2. Garante envio focando o campo de texto e pressionando Enter
-                try:
-                    input_field = page.locator(input_selector).first
-                    input_field.focus()
-                    page.keyboard.press("Enter")
-                    logger.info("Tecla Enter acionada no campo de prompt.")
-                except Exception:
-                    page.keyboard.press("Enter")
+                # 2. Se não clicou no botão de envio, envia com Enter diretamente no input
+                if not submitted:
+                    try:
+                        input_el.press("Enter")
+                        logger.info("Tecla Enter acionada no campo de prompt.")
+                    except Exception:
+                        page.keyboard.press("Enter")
+                        logger.info("Tecla Enter acionada no teclado global.")
 
                 time.sleep(2)
 
                 if screenshot_on_error:
                     take_screenshot(page, screenshot_dir, f"after_submit_attempt{attempt}")
-
-                # Se abriu paywall ou popup logo após envio, tenta fechar imediatamente
-                dismiss_popups(page, screenshot_dir, f"after_submit_popup_attempt{attempt}")
 
                 # Aguarda vídeo ficar pronto
                 video_src = wait_for_video_ready(
