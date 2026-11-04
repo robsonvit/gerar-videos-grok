@@ -75,11 +75,30 @@ def load_cookies_from_env() -> list | None:
 def dismiss_popups(page, screenshot_dir: Path, label: str = "popup"):
     """
     Fecha qualquer popup/modal que esteja bloqueando a interface do Grok.
-    Exemplos: 'Conheça o Bot do Grok', 'Shape your scene', banners de novidades, etc.
+    Exemplos: 'Conheça o Bot do Grok', 'Shape your scene', 'Criar Projeto', banners de novidades, etc.
     """
     dismissed = False
 
-    # Estratégia 1: Fecha via botão X específico no topo direito de modais
+    # Estratégia 1: Remove cards flutuantes indesejados (Shape your scene, banners, modal de projeto) sem cliques cegos
+    try:
+        removed = page.evaluate("""() => {
+            let count = 0;
+            document.querySelectorAll('*').forEach(el => {
+                const txt = (el.innerText || '').toLowerCase();
+                if (txt.includes('shape your scene') || txt.includes('conheça o bot') || txt.includes('criar projeto') || txt.includes('novo projeto')) {
+                    const card = el.closest('div[class*="rounded"], div[class*="shadow"], div[class*="fixed"], [role="dialog"]') || el;
+                    try { card.remove(); count++; } catch (e) {}
+                }
+            });
+            return count;
+        }""")
+        if removed > 0:
+            logger.info(f"Removido(s) {removed} card(s)/modal(is) indesejados via DOM.")
+            dismissed = True
+    except Exception:
+        pass
+
+    # Estratégia 2: Fecha via botão X específico no topo direito de modais
     try:
         closed = page.evaluate("""() => {
             let count = 0;
@@ -106,7 +125,7 @@ def dismiss_popups(page, screenshot_dir: Path, label: str = "popup"):
     except Exception:
         pass
 
-    # Estratégia 2: Se ainda houver dialog visível, pressiona Escape
+    # Estratégia 3: Se ainda houver dialog visível, pressiona Escape
     try:
         dialog = page.query_selector("[role='dialog'], dialog")
         if dialog and dialog.is_visible():
@@ -115,29 +134,6 @@ def dismiss_popups(page, screenshot_dir: Path, label: str = "popup"):
             dismissed = True
     except Exception:
         pass
-
-    # Estratégia 3: Seletores adicionais de botões de fechar comuns
-    close_selectors = [
-        "button[aria-label='Close']",
-        "button[aria-label='Fechar']",
-        "button[aria-label='close']",
-        "button[title='Close']",
-        "button[title='Fechar']",
-        "[data-testid='close-button']",
-        "button:has-text('✕')",
-        "button:has-text('×')",
-    ]
-    for selector in close_selectors:
-        try:
-            btns = page.query_selector_all(selector)
-            for btn in btns:
-                if btn.is_visible():
-                    btn.click(force=True)
-                    time.sleep(0.3)
-                    dismissed = True
-                    logger.info(f"Botão de popup/fechar acionado via seletor: {selector}")
-        except Exception:
-            continue
 
     if dismissed:
         logger.info("✅ Popup/modal fechado/removido com sucesso")
@@ -569,22 +565,26 @@ def generate_video_on_grok(
                 # Envia o prompt
                 logger.info("Enviando prompt...")
                 submitted = False
+
+                # Localiza a barra/container principal do prompt
+                prompt_container = page.locator("div:has(textarea, [contenteditable='true'])").last
+
+                # 1. Clica no botão de envio dentro do próprio container do prompt (evita botões externos de modais)
                 try:
-                    send_btn = page.locator("button[type='submit'], button[aria-label*='Send' i], button[aria-label*='Enviar' i], button[aria-label*='Gerar' i]").first
+                    send_btn = prompt_container.locator("button:has(svg)").last
                     if send_btn.is_visible(timeout=1500):
                         send_btn.click(force=True)
                         submitted = True
-                        logger.info("Botão de envio acionado via locator.")
+                        logger.info("Botão de envio da barra de prompt clicado.")
                 except Exception:
                     pass
 
-                # Garante envio focando o campo de texto e pressionando Enter
+                # 2. Garante envio focando o campo de texto e pressionando Enter
                 try:
                     input_field = page.locator(input_selector).first
-                    if input_field.is_visible(timeout=1000):
-                        input_field.focus()
-                        page.keyboard.press("Enter")
-                        logger.info("Tecla Enter acionada no campo de prompt.")
+                    input_field.focus()
+                    page.keyboard.press("Enter")
+                    logger.info("Tecla Enter acionada no campo de prompt.")
                 except Exception:
                     page.keyboard.press("Enter")
 
