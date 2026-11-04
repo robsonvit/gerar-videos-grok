@@ -7,6 +7,7 @@ Usa a sessão autenticada do usuário armazenada como GitHub Secret (GROK_COOKIE
 
 import json
 import os
+import re
 import sys
 import time
 import logging
