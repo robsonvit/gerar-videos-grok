@@ -5,61 +5,55 @@
       "id": "openrouter/free",
       "name": "OpenRouter: Free Models Router",
       "max_tokens": 1024,
-      "temperature": 0.7
+      "temperature": 0.5
     },
     {
       "id": "nvidia/nemotron-3.5-lightning:free",
       "name": "NVIDIA: Nemotron 3.5 Lightning (Free)",
       "max_tokens": 1024,
-      "temperature": 0.7
-    },
-    {
-      "id": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
-      "name": "NVIDIA: Nemotron 3 Nano Omni (Free)",
-      "max_tokens": 1024,
-      "temperature": 0.7
-    },
-    {
-      "id": "liquid/lfm-2.5-2.6b:free",
-      "name": "LiquidAI: LFM 2.5 2.6B (Free)",
-      "max_tokens": 1024,
-      "temperature": 0.7
-    },
-    {
-      "id": "xingchen-agi/xing4.0-29b-a4b:free",
-      "name": "XingChen: Xing 4.0 29B (Free)",
-      "max_tokens": 1024,
-      "temperature": 0.7
-    },
-    {
-      "id": "dots-studio/dots-3-note-preview:free",
-      "name": "Dots Studio: Dots 3 Note Preview (Free)",
-      "max_tokens": 1024,
-      "temperature": 0.7
+      "temperature": 0.5
     },
     {
       "id": "google/gemma-4-26b-a4b-it:free",
       "name": "Google: Gemma 4 26B (Free)",
       "max_tokens": 1024,
-      "temperature": 0.7
+      "temperature": 0.5
     },
     {
       "id": "google/gemma-4-31b-it:free",
       "name": "Google: Gemma 4 31B (Free)",
       "max_tokens": 1024,
-      "temperature": 0.7
+      "temperature": 0.5
+    },
+    {
+      "id": "liquid/lfm-2.5-2.6b:free",
+      "name": "LiquidAI: LFM 2.5 2.6B (Free)",
+      "max_tokens": 1024,
+      "temperature": 0.5
+    },
+    {
+      "id": "xingchen-agi/xing4.0-29b-a4b:free",
+      "name": "XingChen: Xing 4.0 29B (Free)",
+      "max_tokens": 1024,
+      "temperature": 0.5
+    },
+    {
+      "id": "dots-studio/dots-3-note-preview:free",
+      "name": "Dots Studio: Dots 3 Note Preview (Free)",
+      "max_tokens": 1024,
+      "temperature": 0.5
     },
     {
       "id": "recursive/flint-v1.0:free",
       "name": "Recursive: Flint v1.0 (Free)",
       "max_tokens": 1024,
-      "temperature": 0.7
+      "temperature": 0.5
     },
     {
       "id": "nvidia/nemotron-3-ultra-550b-a55b:free",
       "name": "NVIDIA: Nemotron 3 Ultra (Free)",
       "max_tokens": 1024,
-      "temperature": 0.7
+      "temperature": 0.5
     }
   ]
 }

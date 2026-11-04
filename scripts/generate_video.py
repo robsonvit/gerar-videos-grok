@@ -79,22 +79,28 @@ def dismiss_popups(page, screenshot_dir: Path, label: str = "popup"):
     """
     dismissed = False
 
-    # Estratégia 1: Clica em botões de confirmação/fechamento conhecidos
-    action_selectors = [
-        "button:has-text('Comece agora')",
-        "button:has-text('Começar')",
-        "button:has-text('Get started')",
-        "button:has-text('Start now')",
-        "button:has-text('Try it now')",
+    # Estratégia 1: Pressiona Escape (método mais limpo para modais React/Radix UI)
+    try:
+        page.keyboard.press("Escape")
+        time.sleep(0.3)
+    except Exception:
+        pass
+
+    # Estratégia 2: Clica estritamente em botões de fechar (X / Close / Fechar)
+    close_selectors = [
         "button[aria-label='Close']",
         "button[aria-label='Fechar']",
         "button[aria-label='close']",
         "button[title='Close']",
         "button[title='Fechar']",
-        "[role='dialog'] button",
         "[data-testid='close-button']",
+        "button:has-text('✕')",
+        "button:has-text('×')",
+        "[role='dialog'] button[aria-label*='close' i]",
+        "[role='dialog'] button[aria-label*='fechar' i]",
+        "[role='dialog'] svg",
     ]
-    for selector in action_selectors:
+    for selector in close_selectors:
         try:
             btns = page.query_selector_all(selector)
             for btn in btns:
@@ -102,43 +108,30 @@ def dismiss_popups(page, screenshot_dir: Path, label: str = "popup"):
                     btn.click(force=True)
                     time.sleep(0.3)
                     dismissed = True
-                    logger.info(f"Botão de popup acionado via seletor: {selector}")
+                    logger.info(f"Botão de popup/fechar acionado via seletor: {selector}")
         except Exception:
             continue
 
-    # Estratégia 2: Pressiona Escape
-    try:
-        page.keyboard.press("Escape")
-        time.sleep(0.3)
-    except Exception:
-        pass
-
-    # Estratégia 3: Remoção direta via JavaScript (infalível para modais e backdrops persistentes)
+    # Estratégia 3: Remoção direta via JavaScript apenas de overlays e botões de fechar
     try:
         removed_count = page.evaluate("""() => {
             let count = 0;
-            // 1. Tenta clicar em botões dentro do dialog
+            // 1. Tenta clicar em botões de fechar dentro do dialog
             document.querySelectorAll('[role="dialog"], dialog').forEach(d => {
                 d.querySelectorAll('button').forEach(b => {
                     const txt = (b.innerText || '').toLowerCase();
                     const aria = (b.getAttribute('aria-label') || '').toLowerCase();
-                    if (txt.includes('comece') || txt.includes('fechar') || txt.includes('close') ||
-                        aria.includes('close') || aria.includes('fechar') || txt.includes('try it')) {
+                    if (txt.includes('fechar') || txt.includes('close') || aria.includes('close') || aria.includes('fechar') || txt === '✕' || txt === '×') {
                         try { b.click(); count++; } catch (e) {}
                     }
                 });
             });
-            // 2. Remove modais e overlays do DOM se ainda existirem
-            document.querySelectorAll('[role="dialog"], dialog, [data-state="open"]').forEach(el => {
-                el.remove();
-                count++;
-            });
-            // 3. Remove backdrops que possam bloquear cliques
+            // 2. Remove modais de anúncio ou overlays que bloqueiem cliques
             document.querySelectorAll('div[class*="backdrop"], div[class*="overlay"]').forEach(el => {
                 el.remove();
                 count++;
             });
-            // 4. Restaura pointer-events e overflow da página
+            // 3. Restaura pointer-events e overflow da página caso tenham sido travados
             if (document.body) {
                 document.body.style.pointerEvents = 'auto';
                 document.body.style.overflow = 'auto';
@@ -150,6 +143,10 @@ def dismiss_popups(page, screenshot_dir: Path, label: str = "popup"):
             dismissed = True
     except Exception as e:
         logger.warning(f"Falha na remoção de popup via JS: {e}")
+
+    if dismissed:
+        logger.info("✅ Popup/modal fechado/removido com sucesso")
+        time.sleep(0.5)
 
     # Verifica se ainda há modal visível
     try:
