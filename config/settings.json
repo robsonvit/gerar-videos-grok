@@ -1,6 +1,6 @@
 {
   "video": {
-    "target_duration_seconds": 6,
+    "target_duration_seconds": 10,
     "format": "mp4",
     "resolution": "720p",
     "aspect_ratio": "9:16",
@@ -19,14 +19,17 @@
     "loudness_range_lra": 11
   },
   "generation": {
-    "service": "grok",
-    "url": "https://grok.com/imagine",
-    "timeout_seconds": 240,
-    "poll_interval_seconds": 10,
+    "service": "kie.ai",
+    "base_url": "https://api.kie.ai",
+    "model": "grok-imagine/text-to-video",
+    "mode": "normal",
+    "resolution": "720p",
+    "duration_seconds": 10,
+    "aspect_ratio": "9:16",
+    "timeout_seconds": 300,
+    "poll_interval_seconds": 5,
     "max_retries": 2,
-    "retry_delay_seconds": 15,
-    "screenshot_on_error": true,
-    "headless": true
+    "retry_delay_seconds": 10
   },
   "script": {
     "max_length_chars": 2500,

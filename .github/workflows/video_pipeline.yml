@@ -90,10 +90,10 @@ jobs:
           retention-days: 30
 
   # ─────────────────────────────────────────────
-  # ETAPA 2: Gerar Vídeo no Grok
+  # ETAPA 2: Gerar Vídeo via Kie.ai (Grok Imagine)
   # ─────────────────────────────────────────────
   generate-video:
-    name: 🎥 Gerar Vídeo no Grok
+    name: 🎥 Gerar Vídeo via Kie.ai
     runs-on: ubuntu-latest
     needs: generate-script
     outputs:
@@ -111,14 +111,11 @@ jobs:
           cache: "pip"
 
       - name: 📦 Instalar dependências Python
-        run: pip install playwright requests
-
-      - name: 🌐 Instalar navegador Chromium
-        run: playwright install chromium --with-deps
+        run: pip install requests
 
       - name: 📁 Criar diretórios de saída
         run: |
-          mkdir -p output/videos output/screenshots output/logs
+          mkdir -p output/videos output/logs
 
       - name: ⬇️ Baixar roteiro do artefato anterior
         uses: actions/download-artifact@v4
@@ -126,15 +123,15 @@ jobs:
           name: roteiro-${{ github.run_number }}
           path: output/scripts/
 
-      - name: 🎥 Gerar vídeo no Grok Aurora
+      - name: 🎥 Gerar vídeo via Kie.ai
         id: gen_video
         env:
-          GROK_COOKIES: ${{ secrets.GROK_COOKIES }}
+          KIE_API_KEY: ${{ secrets.KIE_API_KEY }}
           SCRIPT_PATH: ${{ needs.generate-script.outputs.script_path }}
           PROMPT_VISUAL: ${{ needs.generate-script.outputs.prompt_visual }}
         run: |
           python scripts/generate_video.py
-        timeout-minutes: 30
+        timeout-minutes: 10
 
       - name: ✅ Verificar vídeo gerado
         run: |
@@ -153,15 +150,6 @@ jobs:
           name: video-raw-${{ github.run_number }}
           path: output/videos/
           retention-days: 7
-
-      - name: 📤 Salvar screenshots de diagnóstico (se houver)
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: screenshots-${{ github.run_number }}
-          path: output/screenshots/
-          retention-days: 7
-          if-no-files-found: ignore
 
   # ─────────────────────────────────────────────
   # ETAPA 3: Processar Vídeo com FFmpeg

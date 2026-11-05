@@ -44,8 +44,8 @@ GitHub Actions
 📝 Gerar Roteiro (OpenRouter API)
      │  Usa fallback entre modelos gratuitos
      ▼
-🎥 Gerar Vídeo (Grok Aurora - grok.com/imagine)
-     │  Automação via Playwright (Chromium headless)
+🎥 Gerar Vídeo (Kie.ai - Grok Imagine 720p 10s)
+     │  Geração direta via API REST oficial do Kie.ai (sem cookies ou Playwright)
      ▼
 ⚙️ Processar Vídeo (FFmpeg)
      │  Normalização de áudio, H.264+AAC, formato vertical
@@ -73,7 +73,7 @@ GitHub Actions
 │
 ├── scripts/
 │   ├── generate_script.py         # Etapa 1: Gera roteiro via OpenRouter
-│   ├── generate_video.py          # Etapa 2: Gera vídeo no Grok via Playwright
+│   ├── generate_video.py          # Etapa 2: Gera vídeo via API do Kie.ai (Grok Imagine)
 │   ├── process_video.py           # Etapa 3: Processa vídeo com FFmpeg
 │   ├── send_telegram.py           # Etapa 4: Envia para Telegram
 │   └── export_cookies.py          # Auxiliar: Exporta cookies do Grok
@@ -97,8 +97,7 @@ GitHub Actions
 | Dependência | Versão | Uso |
 |-------------|--------|-----|
 | Python | 3.11+ | Runtime dos scripts |
-| requests | ≥2.31 | Chamadas às APIs |
-| playwright | ≥1.40 | Automação do navegador |
+| requests | ≥2.31 | Chamadas às APIs (Kie.ai, OpenRouter, Telegram, Facebook) |
 | FFmpeg | Qualquer | Processamento de vídeo |
 
 > No GitHub Actions, todas as dependências são instaladas automaticamente pelo workflow.
@@ -121,10 +120,10 @@ Acesse: **Repositório → Settings → Secrets and variables → Actions → Ne
 
 | Secret | Descrição | Obrigatório |
 |--------|-----------|-------------|
-| `OPENROUTER_API_KEY` | Chave da API do OpenRouter | ✅ Sim |
+| `OPENROUTER_API_KEY` | Chave da API do OpenRouter (roteiros) | ✅ Sim |
+| `KIE_API_KEY` | Chave da API do Kie.ai (geração de vídeo Grok Imagine) | ✅ Sim |
 | `TELEGRAM_BOT_TOKEN` | Token do bot do Telegram | ✅ Sim |
 | `TELEGRAM_CHAT_ID` | ID do chat/canal/grupo Telegram | ✅ Sim |
-| `GROK_COOKIES` | Cookies de autenticação do Grok | ✅ Sim |
 
 > **⚠️ IMPORTANTE:** Nunca coloque esses valores diretamente no código ou em arquivos que serão comittados.
 
@@ -323,4 +322,4 @@ master_prompt.txt → OpenRouter API → roteiro.json
 
 ---
 
-*Desenvolvido com GitHub Actions, OpenRouter, Playwright e FFmpeg.*
+*Desenvolvido com GitHub Actions, OpenRouter, Kie.ai (Grok Imagine) e FFmpeg.*

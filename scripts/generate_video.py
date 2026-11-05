@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 generate_video.py
-Automatiza a geração de vídeo no Grok Aurora (grok.com/imagine) via Playwright.
-Usa a sessão autenticada do usuário armazenada como GitHub Secret (GROK_COOKIES).
+Gera vídeos gastronômicos com alta fidelidade e áudio/narração em PT-BR
+utilizando a API oficial do Kie.ai (modelo Grok Imagine Text-to-Video 720p 10s).
 """
 
 import json
@@ -13,12 +13,13 @@ import time
 import logging
 from datetime import datetime
 from pathlib import Path
+import requests
 
-try:
-    from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout
-except ImportError:
-    print("ERRO: Playwright não instalado. Execute: pip install playwright && playwright install chromium")
-    sys.exit(1)
+# Configuração de encoding para suporte a caracteres especiais em qualquer OS
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 logging.basicConfig(
     level=logging.INFO,
@@ -29,14 +30,17 @@ logger = logging.getLogger(__name__)
 
 
 def load_config(base_dir: Path) -> dict:
-    """Carrega as configurações."""
+    """Carrega as configurações gerais."""
     settings_path = base_dir / "config" / "settings.json"
+    if not settings_path.exists():
+        logger.error(f"Arquivo de configurações não encontrado: {settings_path}")
+        sys.exit(1)
     with open(settings_path, "r", encoding="utf-8") as f:
         return json.load(f)
 
 
 def load_script(script_path: str) -> dict:
-    """Carrega o roteiro gerado."""
+    """Carrega o roteiro JSON gerado pelo step anterior."""
     path = Path(script_path)
     if not path.exists():
         logger.error(f"Arquivo de roteiro não encontrado: {script_path}")
@@ -45,602 +49,165 @@ def load_script(script_path: str) -> dict:
         return json.load(f)
 
 
-def take_screenshot(page, output_dir: Path, label: str):
-    """Captura screenshot para diagnóstico (sem travar em fontes ou scroll infinito)."""
-    try:
-        output_dir.mkdir(parents=True, exist_ok=True)
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        screenshot_path = output_dir / f"screenshot_{label}_{timestamp}.png"
-        page.screenshot(path=str(screenshot_path), timeout=5000)
-        logger.info(f"Screenshot salvo: {screenshot_path}")
-    except Exception as e:
-        logger.warning(f"Falha ao capturar screenshot: {e}")
-
-
-def load_cookies_from_env() -> list | None:
-    """Carrega cookies do Grok a partir da variável de ambiente GROK_COOKIES."""
-    cookies_json = os.environ.get("GROK_COOKIES", "")
-    if not cookies_json:
-        logger.warning("Variável GROK_COOKIES não encontrada. Executando sem cookies.")
-        return None
-    try:
-        cookies = json.loads(cookies_json)
-        logger.info(f"Cookies carregados: {len(cookies)} cookie(s)")
-        return cookies
-    except json.JSONDecodeError as e:
-        logger.error(f"GROK_COOKIES inválido (não é JSON válido): {e}")
-        return None
-
-
-def dismiss_popups(page, screenshot_dir: Path, label: str = "popup"):
-    """
-    Fecha qualquer popup/modal que esteja bloqueando a interface do Grok.
-    Exemplos: 'Conheça o Bot do Grok', 'Shape your scene', etc.
-    """
-    dismissed = False
-
-    # Estratégia 1: Remove cards promocionais flutuantes específicos sem cliques cegos
-    try:
-        removed = page.evaluate("""() => {
-            let count = 0;
-            document.querySelectorAll('div').forEach(el => {
-                const txt = (el.innerText || '').toLowerCase();
-                if (txt.includes('shape your scene') || txt.includes('conheça o bot')) {
-                    const card = el.closest('div[class*="fixed"], div[class*="absolute"]') || el;
-                    try { card.remove(); count++; } catch (e) {}
-                }
-            });
-            return count;
-        }""")
-        if removed > 0:
-            logger.info(f"Removido(s) {removed} card(s) promocional(is) via DOM.")
-            dismissed = True
-    except Exception:
-        pass
-
-    # Estratégia 2: Fecha via botão X específico de modais
-    try:
-        closed = page.evaluate("""() => {
-            let count = 0;
-            document.querySelectorAll('[role="dialog"], dialog').forEach(dialog => {
-                const buttons = Array.from(dialog.querySelectorAll('button'));
-                const closeBtn = buttons.find(b => {
-                    const txt = (b.innerText || '').trim().toLowerCase();
-                    const aria = (b.getAttribute('aria-label') || '').toLowerCase();
-                    return (txt === 'x' || txt === '✕' || txt === '×' || aria.includes('close') || aria.includes('fechar'));
-                });
-                if (closeBtn) {
-                    try { closeBtn.click(); count++; } catch (e) {}
-                }
-            });
-            return count;
-        }""")
-        if closed > 0:
-            logger.info(f"Botão de fechar acionado em {closed} modal(is)")
-            dismissed = True
-            time.sleep(0.5)
-    except Exception:
-        pass
-
-    # Estratégia 3: Se ainda houver dialog visível, pressiona Escape
-    try:
-        dialog = page.query_selector("[role='dialog'], dialog")
-        if dialog and dialog.is_visible():
-            page.keyboard.press("Escape")
-            time.sleep(0.5)
-            dismissed = True
-    except Exception:
-        pass
-
-    if dismissed:
-        logger.info("✅ Popup/modal fechado/removido com sucesso")
-        time.sleep(0.5)
-
-
-def select_video_mode(page, max_retries: int = 5) -> bool:
-    """
-    Garante que o modo Vídeo está selecionado na interface do Grok Aurora.
-    Retorna True se confirmado que está em modo vídeo, False caso contrário.
-    """
-    logger.info("Verificando e selecionando modo Vídeo...")
-    duration_locator = page.locator("[aria-label*='uração do vídeo' i], [title*='uração do vídeo' i], [aria-label*='ideo duration' i], button:has-text('5s'), button:has-text('6s'), button:has-text('10s'), button:has-text('15s')").first
-
-    for attempt in range(1, max_retries + 1):
-        try:
-            # 1. Verifica se já está em modo vídeo (ex: botão de duração já está visível)
-            if duration_locator.is_visible(timeout=1000):
-                logger.info("✅ Modo Vídeo já está ativo (botão de duração presente)")
-                return True
-
-            # 2. Tenta clicar no botão de vídeo via múltiplos seletores Playwright com auto-wait
-            clicked = False
-            video_locators = [
-                "button:has-text('Imagem') + button",
-                "button:has-text('Imagem') ~ button",
-                "button[aria-label*='ideo' i]",
-                "button[title*='ideo' i]",
-                "button:has-text('Vídeo')",
-                "button:has-text('Video')",
-            ]
-
-            for loc in video_locators:
-                try:
-                    btn = page.locator(loc).first
-                    if btn.is_visible(timeout=1500):
-                        btn.click(force=True)
-                        logger.info(f"Botão de modo Vídeo clicado via locator: {loc}")
-                        clicked = True
-                        time.sleep(1)
-                        break
-                except Exception:
-                    continue
-
-            # 3. Fallback: injeção JavaScript robusta
-            if not clicked:
-                js_clicked = page.evaluate("""() => {
-                    const buttons = Array.from(document.querySelectorAll('button'));
-                    const vBtn = buttons.find(b => {
-                        const aria = (b.getAttribute('aria-label') || '').toLowerCase();
-                        const txt = (b.innerText || '').toLowerCase();
-                        const title = (b.getAttribute('title') || '').toLowerCase();
-                        return aria.includes('video') || aria.includes('vídeo') ||
-                               txt.includes('video') || txt.includes('vídeo') ||
-                               title.includes('video') || title.includes('vídeo');
-                    });
-                    if (vBtn) {
-                        vBtn.click();
-                        return 'video_button';
-                    }
-                    const imgBtn = buttons.find(b => (b.innerText || '').toLowerCase().includes('imagem'));
-                    if (imgBtn) {
-                        let next = imgBtn.nextElementSibling;
-                        while (next && next.tagName !== 'BUTTON') next = next.nextElementSibling;
-                        if (!next && imgBtn.parentElement) {
-                            const siblings = Array.from(imgBtn.parentElement.querySelectorAll('button'));
-                            const idx = siblings.indexOf(imgBtn);
-                            if (idx !== -1 && idx + 1 < siblings.length) next = siblings[idx + 1];
-                        }
-                        if (next) {
-                            next.click();
-                            return 'sibling_button';
-                        }
-                    }
-                    return null;
-                }""")
-                if js_clicked:
-                    logger.info(f"Modo Vídeo acionado via JS: {js_clicked}")
-                    time.sleep(1)
-
-            # 4. Confirma se o modo Vídeo foi ativado
-            if duration_locator.is_visible(timeout=2500):
-                logger.info("✅ Modo Vídeo confirmado ativo!")
-                return True
-        except Exception as e:
-            logger.warning(f"Tentativa {attempt} ao selecionar modo Vídeo: {e}")
-
-        time.sleep(1)
-
-    logger.warning("Não foi possível confirmar ativação do modo Vídeo após várias tentativas")
-    return False
-
-
-def verify_video_mode_and_duration(page) -> bool:
-    """
-    Verifica e confirma que o modo Vídeo está ativo e a duração padrão (6s) está definida.
-    No plano gratuito do Grok Aurora, a duração padrão suportada é 6s.
-    Tentar forçar 15s abre o modal de paywall 'Desbloqueie sua criatividade com Imagine'.
-    Portanto, mantemos a duração nativa padrão (6s) para garantir geração sem bloqueios.
-    """
-    logger.info("Confirmando configurações de modo de vídeo e duração...")
-    try:
-        duration_btn = page.locator(
-            "[aria-label*='uração do vídeo' i], [title*='uração do vídeo' i], [aria-label*='ideo duration' i], button:has-text('6s'), button:has-text('5s')"
-        ).first
-        if duration_btn.is_visible(timeout=1500):
-            text_now = duration_btn.inner_text().strip()
-            logger.info(f"Duração ativa no Grok: '{text_now}'")
-            return True
-        logger.info("Modo de vídeo pronto.")
-        return True
-    except Exception as e:
-        logger.warning(f"Verificação de duração: {e}")
-        return True
-
-
-def wait_for_video_ready(
-    page,
-    timeout_ms: int,
-    poll_interval_ms: int,
-    screenshot_dir: Path,
-    existing_srcs: set = None,
-    captured_urls: list = None
+def create_kie_task(
+    api_key: str,
+    prompt: str,
+    model: str = "grok-imagine/text-to-video",
+    aspect_ratio: str = "9:16",
+    duration: int = 10,
+    resolution: str = "720p",
+    mode: str = "normal"
 ) -> str | None:
     """
-    Aguarda o vídeo ficar disponível na interface do Grok.
-    Retorna a URL do vídeo ou None em caso de timeout.
+    Envia a tarefa de geração para a API do Kie.ai.
+    Retorna o taskId ou None em caso de falha.
     """
-    logger.info("Aguardando geração do vídeo...")
+    url = "https://api.kie.ai/api/v1/jobs/createTask"
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "model": model,
+        "input": {
+            "prompt": prompt,
+            "aspect_ratio": aspect_ratio,
+            "duration": duration,
+            "resolution": resolution,
+            "mode": mode
+        }
+    }
+
+    logger.info(f"Submetendo tarefa ao Kie.ai (modelo: {model}, {resolution}, {duration}s, {aspect_ratio})...")
+    try:
+        response = requests.post(url, headers=headers, json=payload, timeout=30)
+        if response.status_code != 200:
+            logger.error(f"Kie.ai createTask retornou status {response.status_code}: {response.text}")
+            return None
+
+        data = response.json()
+        code = data.get("code")
+        if code != 200:
+            logger.error(f"Kie.ai createTask retornou código de erro {code}: {data.get('message', 'Erro desconhecido')}")
+            return None
+
+        task_id = data.get("data", {}).get("taskId")
+        if not task_id:
+            logger.error(f"Kie.ai createTask não retornou taskId: {data}")
+            return None
+
+        logger.info(f"Tarefa criada com sucesso! Task ID: {task_id}")
+        return task_id
+
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Erro na requisição para Kie.ai createTask: {e}")
+        return None
+
+
+def poll_kie_task(
+    api_key: str,
+    task_id: str,
+    timeout_seconds: int = 300,
+    poll_interval: int = 5
+) -> str | None:
+    """
+    Monitora a execução da tarefa no Kie.ai até a conclusão ou timeout.
+    Retorna a URL do vídeo baixável ou None em caso de falha.
+    """
+    url = f"https://api.kie.ai/api/v1/jobs/recordInfo?taskId={task_id}"
+    headers = {
+        "Authorization": f"Bearer {api_key}"
+    }
+
     start_time = time.time()
-    timeout_s = timeout_ms / 1000
+    logger.info(f"Aguardando processamento da tarefa {task_id} (timeout: {timeout_seconds}s)...")
 
-    if existing_srcs is None:
-        existing_srcs = set()
-    if captured_urls is None:
-        captured_urls = []
-
-    while (time.time() - start_time) < timeout_s:
+    while time.time() - start_time < timeout_seconds:
+        elapsed = int(time.time() - start_time)
         try:
-            # 1. Verifica se interceptamos URL de vídeo via rede
-            for url in captured_urls:
-                if url and url not in existing_srcs:
-                    logger.info(f"🎯 Vídeo detectado via tráfego de rede: {url[:80]}...")
-                    return url
+            response = requests.get(url, headers=headers, timeout=20)
+            if response.status_code == 200:
+                body = response.json()
+                data = body.get("data", {})
+                state = data.get("state", "unknown")
 
-            # 2. Tenta localizar elemento de vídeo gerado no DOM
-            video_elements = page.query_selector_all("video, video source, source")
-            for video in video_elements:
-                src = video.get_attribute("src")
-                if src and ("blob:" in src or ".mp4" in src or "media" in src.lower()):
-                    if src not in existing_srcs:
-                        logger.info(f"Vídeo detectado com src: {src[:80]}...")
-                        return src
+                if state == "success":
+                    # Extrai a URL do vídeo
+                    result_urls = data.get("response", {}).get("resultUrls", [])
+                    if not result_urls and "resultJson" in data:
+                        try:
+                            rj = json.loads(data["resultJson"])
+                            result_urls = rj.get("resultUrls", [])
+                        except Exception:
+                            pass
 
-            # 3. Verifica via JavaScript (currentSrc e src em <video>)
-            js_src = page.evaluate("""() => {
-                for (const v of document.querySelectorAll('video')) {
-                    const s = v.currentSrc || v.src;
-                    if (s && (s.includes('blob:') || s.includes('.mp4') || s.toLowerCase().includes('media'))) {
-                        return s;
-                    }
-                }
-                return null;
-            }""")
-            if js_src and js_src not in existing_srcs:
-                logger.info(f"Vídeo detectado via currentSrc (JS): {js_src[:80]}...")
-                return js_src
+                    if result_urls and len(result_urls) > 0:
+                        video_url = result_urls[0]
+                        cost_credits = data.get("costCredits", "N/A")
+                        logger.info(f"✅ Vídeo gerado com sucesso em {elapsed}s! (Créditos consumidos: {cost_credits})")
+                        logger.info(f"URL do vídeo: {video_url}")
+                        return video_url
+                    else:
+                        logger.error(f"Estado 'success' mas nenhuma URL de vídeo encontrada: {data}")
+                        return None
 
-            # 4. Tenta clicar em botões de play / preview gerados após 30s
-            if int(time.time() - start_time) > 30:
-                try:
-                    page.evaluate("""() => {
-                        const playBtns = document.querySelectorAll("button[aria-label*='Play' i], button[aria-label*='Reproduzir' i], video + button");
-                        if (playBtns.length > 0) {
-                            try { playBtns[0].click(); } catch (e) {}
-                        }
-                    }""")
-                except Exception:
-                    pass
-
-            # Verifica se há mensagem de erro ou paywall na página
-            paywall_info = page.evaluate("""() => {
-                const text = (document.body ? document.body.innerText : '').toLowerCase();
-                const hasPaywall = text.includes('desbloqueie sua criatividade') ||
-                                   text.includes('obter plus') ||
-                                   text.includes('resgatar oferta') ||
-                                   text.includes('cota de uso de ia') ||
-                                   text.includes('unlock your creativity');
-                return {
-                    hasPaywall: hasPaywall
-                };
-            }""")
-
-            if paywall_info and paywall_info.get("hasPaywall"):
-                logger.warning("Modal de paywall/assinatura detectado na página!")
-                take_screenshot(page, screenshot_dir, "paywall_detected")
-                dismiss_popups(page, screenshot_dir, "paywall_dismiss")
-                time.sleep(2)
-
-                # Verifica se a geração está ativa no background
-                is_generating = page.evaluate("""() => {
-                    const text = (document.body ? document.body.innerText : '').toLowerCase();
-                    return text.includes('gerando') || text.includes('generating') || /\\b\\d+%/i.test(text);
-                }""")
-
-                if not is_generating and not captured_urls:
-                    logger.error("🚨 Geração bloqueada pelo Grok: Cota gratuita diária esgotada ou exigência de assinatura Plus/Super ('Desbloqueie sua criatividade com Imagine').")
-                    take_screenshot(page, screenshot_dir, "quota_exceeded")
+                elif state == "fail":
+                    fail_reason = data.get("failReason", "Motivo não informado")
+                    logger.error(f"❌ Falha na geração do vídeo pelo Kie.ai: {fail_reason}")
                     return None
 
-            error_texts = [
-                "Something went wrong",
-                "Error generating",
-                "Failed to generate",
-                "Unable to create"
-            ]
-            page_content = page.content().lower()
-            for error_text in error_texts:
-                if error_text.lower() in page_content:
-                    logger.error(f"Erro detectado na página: '{error_text}'")
-                    take_screenshot(page, screenshot_dir, "error_detected")
-                    return None
+                else:
+                    logger.info(f"[{elapsed}s] Tarefa em andamento... Estado atual: '{state}'")
 
-            elapsed = int(time.time() - start_time)
-            logger.info(f"Aguardando... {elapsed}s / {int(timeout_s)}s")
-            time.sleep(poll_interval_ms / 1000)
+            else:
+                logger.warning(f"[{elapsed}s] recordInfo retornou status {response.status_code}")
 
-        except Exception as e:
-            logger.warning(f"Erro durante polling: {e}")
-            time.sleep(poll_interval_ms / 1000)
+        except requests.exceptions.RequestException as e:
+            logger.warning(f"[{elapsed}s] Erro de rede ao consultar status: {e}")
 
-    logger.error(f"Timeout após {int(timeout_s)}s aguardando o vídeo")
-    take_screenshot(page, screenshot_dir, "timeout")
+        time.sleep(poll_interval)
+
+    logger.error(f"Timeout de {timeout_seconds}s atingido aguardando processamento da tarefa.")
     return None
 
 
-def download_video(page, video_src: str, output_path: Path) -> bool:
-    """Faz o download do vídeo gerado."""
-    import urllib.request
-
+def download_video(video_url: str, output_path: Path) -> bool:
+    """Baixa o vídeo da URL fornecida e salva no caminho de saída."""
+    logger.info(f"Iniciando download do vídeo para: {output_path}")
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     try:
-        if video_src.startswith("blob:"):
-            # Para URLs blob, usa JavaScript para extrair o conteúdo
-            logger.info("Detectada URL blob, extraindo via JavaScript...")
-            video_data = page.evaluate("""
-                async (src) => {
-                    const response = await fetch(src);
-                    const buffer = await response.arrayBuffer();
-                    let binary = '';
-                    const bytes = new Uint8Array(buffer);
-                    const chunk = 0x8000;
-                    for (let i = 0; i < bytes.length; i += chunk) {
-                        binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
-                    }
-                    return btoa(binary);
-                }
-            """, video_src)
+        with requests.get(video_url, stream=True, timeout=60) as response:
+            response.raise_for_status()
+            total_size = int(response.headers.get("content-length", 0))
+            downloaded = 0
 
-            if video_data:
-                import base64
-                with open(output_path, "wb") as f:
-                    f.write(base64.b64decode(video_data))
-                logger.info(f"Vídeo blob salvo em: {output_path}")
-                return True
-            else:
-                logger.error("Dados do blob vazios")
-                return False
+            with open(output_path, "wb") as f:
+                for chunk in response.iter_content(chunk_size=64 * 1024):
+                    if chunk:
+                        f.write(chunk)
+                        downloaded += len(chunk)
 
-        elif video_src.startswith("http"):
-            # Download direto para URLs HTTP
-            logger.info(f"Fazendo download direto de: {video_src[:80]}...")
-            response = page.request.get(video_src)
-            if response.ok:
-                with open(output_path, "wb") as f:
-                    f.write(response.body())
-                logger.info(f"Vídeo salvo em: {output_path}")
-                return True
-            else:
-                logger.error(f"Erro ao baixar vídeo. Status: {response.status} - {response.status_text}")
-                return False
-
-        else:
-            logger.error(f"Tipo de URL não suportado: {video_src[:50]}")
-            return False
+            size_mb = downloaded / (1024 * 1024)
+            logger.info(f"Download concluído com sucesso: {output_path.name} ({size_mb:.2f} MB)")
+            return True
 
     except Exception as e:
-        logger.error(f"Erro ao fazer download do vídeo: {e}")
+        logger.error(f"Erro ao baixar vídeo de {video_url}: {e}")
+        if output_path.exists():
+            output_path.unlink()
         return False
 
 
-def generate_video_on_grok(
-    prompt: str,
-    output_path: Path,
-    settings: dict,
-    screenshot_dir: Path
-) -> bool:
-    """
-    Automatiza a geração de vídeo no Grok Aurora.
-
-    Parâmetros configuráveis em config/settings.json -> generation
-    """
-    gen_config = settings.get("generation", {})
-    url = gen_config.get("url", "https://grok.com/imagine")
-    timeout_s = gen_config.get("timeout_seconds", 300)
-    poll_interval_s = gen_config.get("poll_interval_seconds", 15)
-    max_retries = gen_config.get("max_retries", 3)
-    retry_delay_s = gen_config.get("retry_delay_seconds", 30)
-    headless = gen_config.get("headless", True)
-    screenshot_on_error = gen_config.get("screenshot_on_error", True)
-
-    cookies = load_cookies_from_env()
-
-    for attempt in range(1, max_retries + 1):
-        logger.info(f"=== Tentativa {attempt}/{max_retries} de geração de vídeo ===")
-
-        try:
-            with sync_playwright() as p:
-                browser = p.chromium.launch(
-                    headless=headless,
-                    args=[
-                        "--no-sandbox",
-                        "--disable-setuid-sandbox",
-                        "--disable-dev-shm-usage",
-                        "--disable-gpu"
-                    ]
-                )
-
-                context = browser.new_context(
-                    viewport={"width": 1280, "height": 720},
-                    user_agent=(
-                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                        "AppleWebKit/537.36 (KHTML, like Gecko) "
-                        "Chrome/120.0.0.0 Safari/537.36"
-                    )
-                )
-
-                # Adiciona cookies se disponíveis
-                if cookies:
-                    context.add_cookies(cookies)
-                    logger.info("Cookies de autenticação aplicados")
-
-                page = context.new_page()
-
-                page.goto(url, wait_until="domcontentloaded", timeout=60000)
-                time.sleep(2)  # Aguarda JS renderizar completamente
-
-                # Fecha qualquer popup/modal que apareça ao carregar
-                # Ex: "Conheça o Grok Bot", banners de novidades, etc.
-                logger.info("Verificando e fechando popups iniciais...")
-                dismiss_popups(page, screenshot_dir, f"initial_attempt{attempt}")
-                time.sleep(1)
-
-                if screenshot_on_error:
-                    take_screenshot(page, screenshot_dir, f"page_loaded_attempt{attempt}")
-
-                # Aguarda o campo de input aparecer
-                # SELETOR: Atualizar se a interface mudar
-                logger.info("Aguardando campo de input...")
-                try:
-                    page.wait_for_selector(
-                        "textarea, [contenteditable='true']",
-                        timeout=30000
-                    )
-                except PlaywrightTimeout:
-                    logger.warning("Campo de input não encontrado. Tentando fechar popups e aguardar novamente...")
-                    dismiss_popups(page, screenshot_dir, f"retry_popup_attempt{attempt}")
-                    time.sleep(2)
-                    try:
-                        page.wait_for_selector(
-                            "textarea, [contenteditable='true']",
-                            timeout=15000
-                        )
-                    except PlaywrightTimeout:
-                        logger.warning("Campo de input ainda não encontrado. Pode ser necessário autenticação.")
-                        if screenshot_on_error:
-                            take_screenshot(page, screenshot_dir, f"no_input_attempt{attempt}")
-                        browser.close()
-                        if attempt < max_retries:
-                            time.sleep(retry_delay_s)
-                        continue
-
-                # Registra listener para capturar URLs de vídeo pelo tráfego de rede
-                captured_video_urls = []
-                def on_network_response(resp):
-                    try:
-                        r_url = resp.url
-                        ct = (resp.headers.get("content-type") or "").lower()
-                        if (".mp4" in r_url or "video" in ct) and not r_url.endswith(".m3u8"):
-                            if r_url not in captured_video_urls:
-                                logger.info(f"🌐 Interceptada URL de vídeo na rede: {r_url[:80]}...")
-                                captured_video_urls.append(r_url)
-                    except Exception:
-                        pass
-
-                page.on("response", on_network_response)
-
-                # Garante modo Vídeo e confirma configurações
-                select_video_mode(page)
-                verify_video_mode_and_duration(page)
-
-                # Insere o prompt usando locator nativo (auto-wait e resiliente a re-render)
-                logger.info(f"Inserindo prompt ({len(prompt)} chars)...")
-                input_selector = "textarea, [contenteditable='true']"
-                input_el = page.locator(input_selector).first
-                input_el.fill(prompt)
-                time.sleep(1)
-
-                # Confirma que modo Vídeo permanece ativo após digitação do prompt
-                select_video_mode(page)
-                verify_video_mode_and_duration(page)
-
-                # Coleta vídeos já existentes na página para ignorá-los
-                existing_srcs = set()
-                try:
-                    video_els = page.query_selector_all("video, video source, source")
-                    for el in video_els:
-                        src = el.get_attribute("src")
-                        if src:
-                            existing_srcs.add(src)
-                except Exception as e:
-                    pass
-                logger.info(f"Encontrados {len(existing_srcs)} vídeos antigos na página para ignorar.")
-
-                # Envia o prompt
-                logger.info("Enviando prompt...")
-                submitted = False
-
-                # 1. Tenta clicar no botão de envio
-                for sel in [
-                    "button[type='submit']",
-                    "button[aria-label*='Send' i]",
-                    "button[aria-label*='Enviar' i]",
-                    "button[aria-label*='Gerar' i]",
-                    "button:has(svg.lucide-arrow-up)",
-                ]:
-                    try:
-                        btn = page.locator(sel).first
-                        if btn.is_visible(timeout=1000):
-                            btn.click(force=True)
-                            submitted = True
-                            logger.info(f"Botão de envio clicado via seletor: {sel}")
-                            break
-                    except Exception:
-                        continue
-
-                # 2. Se não clicou no botão de envio, envia com Enter diretamente no input
-                if not submitted:
-                    try:
-                        input_el.press("Enter")
-                        logger.info("Tecla Enter acionada no campo de prompt.")
-                    except Exception:
-                        page.keyboard.press("Enter")
-                        logger.info("Tecla Enter acionada no teclado global.")
-
-                time.sleep(2)
-
-                if screenshot_on_error:
-                    take_screenshot(page, screenshot_dir, f"after_submit_attempt{attempt}")
-
-                # Aguarda vídeo ficar pronto
-                video_src = wait_for_video_ready(
-                    page=page,
-                    timeout_ms=timeout_s * 1000,
-                    poll_interval_ms=poll_interval_s * 1000,
-                    screenshot_dir=screenshot_dir,
-                    existing_srcs=existing_srcs,
-                    captured_urls=captured_video_urls
-                )
-
-                if video_src:
-                    success = download_video(page, video_src, output_path)
-                    browser.close()
-
-                    if success:
-                        logger.info(f"Vídeo gerado e salvo com sucesso: {output_path}")
-                        return True
-                    else:
-                        logger.error("Falha no download do vídeo")
-                else:
-                    logger.error("Vídeo não encontrado na página")
-                    browser.close()
-
-        except Exception as e:
-            logger.error(f"Erro durante automação do navegador (tentativa {attempt}): {e}")
-            if screenshot_on_error:
-                try:
-                    if 'page' in locals():
-                        take_screenshot(page, screenshot_dir, f"exception_attempt{attempt}")
-                except Exception:
-                    pass
-
-        if attempt < max_retries:
-            logger.info(f"Aguardando {retry_delay_s}s antes da próxima tentativa...")
-            time.sleep(retry_delay_s)
-
-    logger.error(f"Todas as {max_retries} tentativas falharam")
-    return False
-
-
 def validate_video_file(video_path: Path, min_size_kb: int = 100) -> bool:
-    """Valida se o arquivo de vídeo existe e tem tamanho mínimo."""
+    """Valida se o arquivo de vídeo existe e atende ao tamanho mínimo."""
     if not video_path.exists():
         logger.error(f"Arquivo de vídeo não encontrado: {video_path}")
         return False
 
     size_kb = video_path.stat().st_size / 1024
     if size_kb < min_size_kb:
-        logger.error(f"Arquivo de vídeo muito pequeno: {size_kb:.1f} KB (mínimo: {min_size_kb} KB)")
+        logger.error(f"Arquivo de vídeo corrompido ou muito pequeno: {size_kb:.1f} KB (mínimo: {min_size_kb} KB)")
         return False
 
     logger.info(f"Vídeo validado: {video_path.name} ({size_kb:.1f} KB)")
@@ -651,33 +218,46 @@ def main():
     """Função principal."""
     base_dir = Path(__file__).parent.parent
 
+    # Chave de API do Kie.ai
+    api_key = os.environ.get("KIE_API_KEY", "").strip()
+    if not api_key:
+        logger.error("Chave de API KIE_API_KEY não encontrada nas variáveis de ambiente.")
+        sys.exit(1)
+
     # Parâmetros via variáveis de ambiente (definidos pelo step anterior no Actions)
-    script_path = os.environ.get("SCRIPT_PATH", "")
-    prompt_visual = os.environ.get("PROMPT_VISUAL", "")
+    script_path = os.environ.get("SCRIPT_PATH", "").strip()
+    prompt_visual = os.environ.get("PROMPT_VISUAL", "").strip()
 
     if not script_path and not prompt_visual:
         logger.error("SCRIPT_PATH ou PROMPT_VISUAL não definidos.")
-        logger.error("Defina pelo menos PROMPT_VISUAL como variável de ambiente.")
         sys.exit(1)
 
     settings = load_config(base_dir)
 
-    # Obtém o prompt visual
+    # Parâmetros da configuração
+    gen_config = settings.get("generation", {})
+    video_config = settings.get("video", {})
+    model = gen_config.get("model", "grok-imagine/text-to-video")
+    resolution = gen_config.get("resolution", "720p")
+    duration = int(gen_config.get("duration_seconds", 10))
+    aspect_ratio = video_config.get("aspect_ratio", "9:16")
+    timeout_seconds = int(gen_config.get("timeout_seconds", 300))
+    poll_interval = int(gen_config.get("poll_interval_seconds", 5))
+
+    # Monta o prompt final
     if script_path:
         script_data = load_script(script_path)
         prompt_base = script_data.get("prompt_visual", prompt_visual)
         narracao = script_data.get("narracao", "")
         titulo = script_data.get("titulo", "video")
-        
-        # Limpa qualquer resíduo ou delimitador markdown da narração
-        narracao = re.sub(r'[\r\n\s]*(?:---+|\*\*\*+|===+|___+)[\r\n\s]*$', '', narracao).strip().strip('"\'')
 
-        # Ajusta referências de duração no prompt base para evitar conflito com duração nativa
+        # Limpeza de formatação e referências antigas de 15s
+        narracao = re.sub(r'[\r\n\s]*(?:---+|\*\*\*+|===+|___+)[\r\n\s]*$', '', narracao).strip().strip('"\'')
         prompt_base = re.sub(r'(?i)exactly\s*15\s*seconds\s*long\.?', '', prompt_base)
         prompt_base = re.sub(r'(?i)15\s*seconds\b', '', prompt_base)
         prompt_base = re.sub(r'\s{2,}', ' ', prompt_base).strip()
 
-        # Junta a narração ao prompt visual para o Grok falar o texto exato
+        # Adiciona a instrução de narração audível em PT-BR para o modelo
         if narracao:
             prompt = f"{prompt_base}\n\nAudio: AI voice speaking in Brazilian Portuguese saying EXACTLY this: '{narracao}'"
         else:
@@ -687,21 +267,21 @@ def main():
         titulo = "video"
 
     if not prompt:
-        logger.error("Prompt visual vazio. Não é possível gerar o vídeo.")
+        logger.error("Prompt de geração vazio. Abortando pipeline.")
         sys.exit(1)
 
-    # Adiciona configurações de formato ao prompt se não presentes
+    # Garante o formato 9:16 no prompt
     if "9:16" not in prompt and "vertical" not in prompt.lower():
-        prompt = f"{prompt}, vertical format 9:16, cinematic quality"
+        prompt = f"{prompt}, vertical format 9:16, cinematic food quality"
 
-    logger.info("=== INICIANDO GERAÇÃO DE VÍDEO ===")
+    logger.info("=== INICIANDO GERAÇÃO DE VÍDEO VIA KIE.AI ===")
     logger.info(f"Título: {titulo}")
-    logger.info(f"Prompt: {prompt[:100]}...")
+    logger.info(f"Modelo: {model} ({resolution}, {duration}s, {aspect_ratio})")
+    logger.info(f"Prompt ({len(prompt)} caracteres):\n{prompt}\n")
 
-    # Configura diretórios de saída
+    # Diretório de saída
     output_config = settings.get("output", {})
     videos_dir = base_dir / output_config.get("videos_dir", "output/videos")
-    screenshots_dir = base_dir / output_config.get("screenshots_dir", "output/screenshots")
     videos_dir.mkdir(parents=True, exist_ok=True)
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -709,32 +289,52 @@ def main():
     video_filename = f"video_{safe_titulo}_{timestamp}.mp4"
     video_output_path = videos_dir / video_filename
 
-    # Gera o vídeo
-    success = generate_video_on_grok(
+    # 1. Cria a tarefa no Kie.ai
+    task_id = create_kie_task(
+        api_key=api_key,
         prompt=prompt,
-        output_path=video_output_path,
-        settings=settings,
-        screenshot_dir=screenshots_dir
+        model=model,
+        aspect_ratio=aspect_ratio,
+        duration=duration,
+        resolution=resolution
     )
 
+    if not task_id:
+        logger.error("Falha ao criar tarefa no Kie.ai. Abortando pipeline.")
+        sys.exit(1)
+
+    # 2. Polling até concluir
+    video_url = poll_kie_task(
+        api_key=api_key,
+        task_id=task_id,
+        timeout_seconds=timeout_seconds,
+        poll_interval=poll_interval
+    )
+
+    if not video_url:
+        logger.error("Falha na geração do vídeo pelo Kie.ai. Abortando pipeline.")
+        sys.exit(1)
+
+    # 3. Download do vídeo
+    success = download_video(video_url, video_output_path)
     if not success:
-        logger.error("Falha na geração do vídeo. Abortando pipeline.")
+        logger.error("Falha no download do vídeo gerado. Abortando pipeline.")
         sys.exit(1)
 
-    # Valida o arquivo gerado
+    # 4. Validação do arquivo
     if not validate_video_file(video_output_path):
-        logger.error("Arquivo de vídeo inválido. Abortando pipeline.")
+        logger.error("Arquivo de vídeo inválido ou incompleto. Abortando pipeline.")
         sys.exit(1)
 
-    # Exporta caminho para o próximo step
+    # 5. Exporta saída para steps posteriores no GitHub Actions
     github_output = os.environ.get("GITHUB_OUTPUT", "")
     if github_output:
         with open(github_output, "a") as f:
             f.write(f"video_path={video_output_path}\n")
             f.write(f"video_filename={video_filename}\n")
 
-    logger.info("=== VÍDEO GERADO COM SUCESSO ===")
-    logger.info(f"Arquivo: {video_output_path}")
+    logger.info("=== VÍDEO GERADO E VALIDADO COM SUCESSO ===")
+    logger.info(f"Arquivo local: {video_output_path}")
     print(f"VIDEO_PATH={video_output_path}")
     return 0
 
