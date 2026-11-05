@@ -109,10 +109,10 @@ def poll_kie_task(
     task_id: str,
     timeout_seconds: int = 300,
     poll_interval: int = 5
-) -> str | None:
+) -> dict | None:
     """
     Monitora a execução da tarefa no Kie.ai até a conclusão ou timeout.
-    Retorna a URL do vídeo baixável ou None em caso de falha.
+    Retorna um dicionário com os dados da tarefa (url, créditos consumidos, etc.) ou None.
     """
     url = f"https://api.kie.ai/api/v1/jobs/recordInfo?taskId={task_id}"
     headers = {
@@ -143,10 +143,17 @@ def poll_kie_task(
 
                     if result_urls and len(result_urls) > 0:
                         video_url = result_urls[0]
-                        cost_credits = data.get("costCredits", "N/A")
-                        logger.info(f"✅ Vídeo gerado com sucesso em {elapsed}s! (Créditos consumidos: {cost_credits})")
+                        credits_consumed = data.get("creditsConsumed", 45.0)
+                        if credits_consumed is None:
+                            credits_consumed = 45.0
+                        cost_time = data.get("costTime", elapsed)
+                        logger.info(f"✅ Vídeo gerado com sucesso em {elapsed}s! (Créditos consumidos: {credits_consumed})")
                         logger.info(f"URL do vídeo: {video_url}")
-                        return video_url
+                        return {
+                            "video_url": video_url,
+                            "credits_consumed": float(credits_consumed),
+                            "cost_time": cost_time
+                        }
                     else:
                         logger.error(f"Estado 'success' mas nenhuma URL de vídeo encontrada: {data}")
                         return None
@@ -168,6 +175,25 @@ def poll_kie_task(
         time.sleep(poll_interval)
 
     logger.error(f"Timeout de {timeout_seconds}s atingido aguardando processamento da tarefa.")
+    return None
+
+
+def get_kie_balance(api_key: str) -> float | None:
+    """Consulta o saldo atual de créditos no Kie.ai."""
+    url = "https://api.kie.ai/api/v1/chat/credit"
+    headers = {
+        "Authorization": f"Bearer {api_key}"
+    }
+    try:
+        response = requests.get(url, headers=headers, timeout=15)
+        if response.status_code == 200:
+            data = response.json()
+            if data.get("code") == 200:
+                balance = float(data.get("data", 0.0))
+                logger.info(f"Saldo atual no Kie.ai: {balance:.1f} créditos (~${balance * 0.005:.2f} USD)")
+                return balance
+    except Exception as e:
+        logger.warning(f"Erro ao consultar saldo Kie.ai: {e}")
     return None
 
 
@@ -304,16 +330,20 @@ def main():
         sys.exit(1)
 
     # 2. Polling até concluir
-    video_url = poll_kie_task(
+    task_result = poll_kie_task(
         api_key=api_key,
         task_id=task_id,
         timeout_seconds=timeout_seconds,
         poll_interval=poll_interval
     )
 
-    if not video_url:
+    if not task_result:
         logger.error("Falha na geração do vídeo pelo Kie.ai. Abortando pipeline.")
         sys.exit(1)
+
+    video_url = task_result["video_url"]
+    credits_spent = task_result.get("credits_consumed", 45.0)
+    spent_usd = credits_spent * 0.005
 
     # 3. Download do vídeo
     success = download_video(video_url, video_output_path)
@@ -326,15 +356,30 @@ def main():
         logger.error("Arquivo de vídeo inválido ou incompleto. Abortando pipeline.")
         sys.exit(1)
 
-    # 5. Exporta saída para steps posteriores no GitHub Actions
+    # 5. Consulta saldo restante após a conclusão
+    remaining_credits = get_kie_balance(api_key)
+    remaining_usd = (remaining_credits * 0.005) if remaining_credits is not None else 0.0
+
+    # 6. Exporta saída para steps posteriores no GitHub Actions
     github_output = os.environ.get("GITHUB_OUTPUT", "")
     if github_output:
         with open(github_output, "a") as f:
             f.write(f"video_path={video_output_path}\n")
             f.write(f"video_filename={video_filename}\n")
+            f.write(f"credits_spent={credits_spent:.1f}\n")
+            f.write(f"spent_usd={spent_usd:.3f}\n")
+            if remaining_credits is not None:
+                f.write(f"credits_remaining={remaining_credits:.1f}\n")
+                f.write(f"remaining_usd={remaining_usd:.2f}\n")
+            else:
+                f.write("credits_remaining=N/A\n")
+                f.write("remaining_usd=N/A\n")
 
     logger.info("=== VÍDEO GERADO E VALIDADO COM SUCESSO ===")
     logger.info(f"Arquivo local: {video_output_path}")
+    logger.info(f"💰 Créditos gastos: {credits_spent:.1f} (~${spent_usd:.3f} USD)")
+    if remaining_credits is not None:
+        logger.info(f"💳 Saldo restante: {remaining_credits:.1f} créditos (~${remaining_usd:.2f} USD)")
     print(f"VIDEO_PATH={video_output_path}")
     return 0
 

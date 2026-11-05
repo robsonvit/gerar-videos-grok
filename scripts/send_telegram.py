@@ -43,7 +43,36 @@ def load_script_info(script_path: str) -> dict:
         return {}
 
 
-def build_caption(script_data: dict, video_filename: str, settings: dict) -> str:
+def get_kie_balance(api_key: str) -> float | None:
+    """Consulta o saldo atual de créditos no Kie.ai."""
+    if not api_key:
+        return None
+    url = "https://api.kie.ai/api/v1/chat/credit"
+    headers = {
+        "Authorization": f"Bearer {api_key}"
+    }
+    try:
+        response = requests.get(url, headers=headers, timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            if data.get("code") == 200:
+                balance = float(data.get("data", 0.0))
+                logger.info(f"Saldo Kie.ai consultado: {balance:.1f} créditos")
+                return balance
+    except Exception as e:
+        logger.warning(f"Erro ao consultar saldo Kie.ai: {e}")
+    return None
+
+
+def build_caption(
+    script_data: dict,
+    video_filename: str,
+    settings: dict,
+    credits_spent: float | None = None,
+    credits_remaining: float | None = None,
+    spent_usd: float | None = None,
+    remaining_usd: float | None = None
+) -> str:
     """Monta a legenda do vídeo para envio no Telegram."""
     tg_config = settings.get("telegram", {})
     send_caption = tg_config.get("send_caption", True)
@@ -56,11 +85,11 @@ def build_caption(script_data: dict, video_filename: str, settings: dict) -> str
     
     # Corta a narração com folga para a legenda inteira ficar
     # abaixo do limite de 1024 chars do Telegram (limite da API)
-    if len(narracao) > 400:
-        narracao = narracao[:400] + "..."
+    if len(narracao) > 350:
+        narracao = narracao[:350] + "..."
         
     estilo = html.escape(script_data.get("estilo", ""))
-    model_used = html.escape(script_data.get("_meta", {}).get("model_name", "OpenRouter"))
+    model_used = html.escape(script_data.get("_meta", {}).get("model_name", "Grok Imagine (Kie.ai)"))
     timestamp = datetime.now().strftime("%d/%m/%Y %H:%M")
 
     caption_lines = [
@@ -70,13 +99,29 @@ def build_caption(script_data: dict, video_filename: str, settings: dict) -> str
     if narracao:
         caption_lines.append(f"\n📝 <i>{narracao}</i>")
 
+    # Bloco de custos e saldo do Kie.ai
+    if credits_spent is not None or credits_remaining is not None:
+        c_spent = credits_spent if credits_spent is not None else 45.0
+        s_usd = spent_usd if spent_usd is not None else (c_spent * 0.005)
+
+        billing_lines = ["\n💰 <b>Custos & Saldo (Kie.ai):</b>"]
+        billing_lines.append(f"├ ⚡ <b>Gasto:</b> {c_spent:.1f} créditos (~${s_usd:.3f} USD)")
+
+        if credits_remaining is not None:
+            r_usd = remaining_usd if remaining_usd is not None else (credits_remaining * 0.005)
+            billing_lines.append(f"└ 💳 <b>Saldo restante:</b> {credits_remaining:.1f} créditos (~${r_usd:.2f} USD)")
+        else:
+            billing_lines[1] = f"└ ⚡ <b>Gasto:</b> {c_spent:.1f} créditos (~${s_usd:.3f} USD)"
+
+        caption_lines.extend(billing_lines)
+
     if estilo:
         caption_lines.append(f"\n🎨 Estilo: {estilo}")
 
     caption_lines.extend([
         f"\n🤖 Modelo: {model_used}",
         f"📅 {timestamp}",
-        f"\n#videogerado #ia #shorts"
+        f"\n#videogerado #ia #shorts #receitas"
     ])
 
     return "\n".join(caption_lines)
@@ -226,7 +271,60 @@ def main():
     settings = load_config(base_dir)
     script_data = load_script_info(script_path)
 
-    caption = build_caption(script_data, processed_path.name, settings)
+    # Variáveis de cobrança e saldo do Kie.ai
+    api_key = os.environ.get("KIE_API_KEY", "").strip()
+    credits_spent_str = os.environ.get("CREDITS_SPENT", "").strip()
+    credits_remaining_str = os.environ.get("CREDITS_REMAINING", "").strip()
+    spent_usd_str = os.environ.get("SPENT_USD", "").strip()
+    remaining_usd_str = os.environ.get("REMAINING_USD", "").strip()
+
+    credits_spent = None
+    if credits_spent_str and credits_spent_str != "N/A":
+        try:
+            credits_spent = float(credits_spent_str)
+        except ValueError:
+            pass
+    if credits_spent is None:
+        credits_spent = 45.0  # Padrão para grok-imagine 10s
+
+    spent_usd = None
+    if spent_usd_str and spent_usd_str != "N/A":
+        try:
+            spent_usd = float(spent_usd_str)
+        except ValueError:
+            pass
+    if spent_usd is None and credits_spent is not None:
+        spent_usd = credits_spent * 0.005
+
+    credits_remaining = None
+    if credits_remaining_str and credits_remaining_str != "N/A":
+        try:
+            credits_remaining = float(credits_remaining_str)
+        except ValueError:
+            pass
+
+    # Se não veio via env, busca diretamente na API do Kie.ai
+    if credits_remaining is None and api_key:
+        credits_remaining = get_kie_balance(api_key)
+
+    remaining_usd = None
+    if remaining_usd_str and remaining_usd_str != "N/A":
+        try:
+            remaining_usd = float(remaining_usd_str)
+        except ValueError:
+            pass
+    if remaining_usd is None and credits_remaining is not None:
+        remaining_usd = credits_remaining * 0.005
+
+    caption = build_caption(
+        script_data=script_data,
+        video_filename=processed_path.name,
+        settings=settings,
+        credits_spent=credits_spent,
+        credits_remaining=credits_remaining,
+        spent_usd=spent_usd,
+        remaining_usd=remaining_usd
+    )
 
     logger.info("=== INICIANDO ENVIO PARA TELEGRAM ===")
 

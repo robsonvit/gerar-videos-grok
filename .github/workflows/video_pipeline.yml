@@ -99,6 +99,10 @@ jobs:
     outputs:
       video_path: ${{ steps.gen_video.outputs.video_path }}
       video_filename: ${{ steps.gen_video.outputs.video_filename }}
+      credits_spent: ${{ steps.gen_video.outputs.credits_spent }}
+      credits_remaining: ${{ steps.gen_video.outputs.credits_remaining }}
+      spent_usd: ${{ steps.gen_video.outputs.spent_usd }}
+      remaining_usd: ${{ steps.gen_video.outputs.remaining_usd }}
 
     steps:
       - name: ⬇️ Checkout do repositório
@@ -234,7 +238,7 @@ jobs:
   send-telegram:
     name: 📱 Enviar para Telegram
     runs-on: ubuntu-latest
-    needs: [generate-script, process-video]
+    needs: [generate-script, generate-video, process-video]
     if: ${{ github.event.inputs.notify_telegram != 'false' }}
 
     steps:
@@ -269,6 +273,11 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          KIE_API_KEY: ${{ secrets.KIE_API_KEY }}
+          CREDITS_SPENT: ${{ needs.generate-video.outputs.credits_spent }}
+          CREDITS_REMAINING: ${{ needs.generate-video.outputs.credits_remaining }}
+          SPENT_USD: ${{ needs.generate-video.outputs.spent_usd }}
+          REMAINING_USD: ${{ needs.generate-video.outputs.remaining_usd }}
           PROCESSED_PATH: ${{ needs.process-video.outputs.processed_path }}
           SCRIPT_PATH: ${{ needs.generate-script.outputs.script_path }}
         run: |
@@ -374,4 +383,8 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Execução:** #${{ github.run_number }} | **Trigger:** ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
           echo "**Título:** ${{ needs.generate-script.outputs.script_title }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 💰 Custos & Créditos (Kie.ai)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Créditos gastos:** ${{ needs.generate-video.outputs.credits_spent }} (~US\$ ${{ needs.generate-video.outputs.spent_usd }})" >> $GITHUB_STEP_SUMMARY
+          echo "- **Saldo restante:** ${{ needs.generate-video.outputs.credits_remaining }} créditos (~US\$ ${{ needs.generate-video.outputs.remaining_usd }})" >> $GITHUB_STEP_SUMMARY
 
