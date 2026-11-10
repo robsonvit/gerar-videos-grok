@@ -25,6 +25,7 @@
     "mode": "normal",
     "resolution": "720p",
     "duration_seconds": 5,
+    "num_shots": 2,
     "aspect_ratio": "9:16",
     "timeout_seconds": 300,
     "poll_interval_seconds": 5,
@@ -34,7 +35,7 @@
   "tts": {
     "service": "fish_audio",
     "model": "s2.1-pro-free",
-    "voice_id": "da20590a048f483986bf9986e6a87694",
+    "voice_id": "8536d5baf86747afaa2525f031316c2a",
     "fallback_service": "edge_tts",
     "fallback_voice": "pt-BR-FranciscaNeural"
   },

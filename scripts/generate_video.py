@@ -5,12 +5,15 @@ Gera vídeos gastronômicos com alta fidelidade e áudio/narração em PT-BR
 utilizando a API oficial do Kie.ai (modelo Grok Imagine Text-to-Video 720p 10s).
 """
 
+import concurrent.futures
 import json
+import logging
 import os
 import re
+import shutil
+import subprocess
 import sys
 import time
-import logging
 from datetime import datetime
 from pathlib import Path
 import requests
@@ -255,6 +258,49 @@ def validate_video_file(video_path: Path, min_size_kb: int = 100) -> bool:
     return True
 
 
+def concatenate_clips(clip_paths: list[Path], output_path: Path) -> bool:
+    """Concatena múltiplos clipes de vídeo usando FFmpeg mantendo proporção e qualidade."""
+    if not clip_paths:
+        return False
+    if len(clip_paths) == 1:
+        shutil.copy2(clip_paths[0], output_path)
+        return True
+
+    inputs = []
+    filter_parts = []
+    concat_inputs = ""
+    for i, p in enumerate(clip_paths):
+        inputs.extend(["-i", str(p)])
+        filter_parts.append(
+            f"[{i}:v]scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2:black,fps=30[v{i}]"
+        )
+        concat_inputs += f"[v{i}]"
+
+    concat_filter = f"{concat_inputs}concat=n={len(clip_paths)}:v=1:a=0[outv]"
+    full_filter = ";".join(filter_parts) + ";" + concat_filter
+
+    cmd = [
+        "ffmpeg", "-y",
+        *inputs,
+        "-filter_complex", full_filter,
+        "-map", "[outv]",
+        "-c:v", "libx264",
+        "-preset", "medium",
+        "-crf", "23",
+        "-b:v", "2000k",
+        "-pix_fmt", "yuv420p",
+        "-movflags", "+faststart",
+        str(output_path)
+    ]
+
+    try:
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        return res.returncode == 0
+    except Exception as e:
+        logger.error(f"Erro ao concatenar clipes: {e}")
+        return False
+
+
 def main():
     """Função principal."""
     base_dir = Path(__file__).parent.parent
@@ -334,41 +380,103 @@ def main():
     video_filename = f"video_{safe_titulo}_{timestamp}.mp4"
     video_output_path = videos_dir / video_filename
 
-    # 1. Cria a tarefa no Kie.ai
-    task_id = create_kie_task(
-        api_key=api_key,
-        prompt=prompt,
-        model=model,
-        aspect_ratio=aspect_ratio,
-        duration=duration,
-        resolution=resolution
-    )
+    # Modo multi-shot para modelos como Runway (para vídeos de 10s+ com múltiplos ângulos reais)
+    num_shots = int(gen_config.get("num_shots", 2 if "runway" in model.lower() else 1))
 
-    if not task_id:
-        logger.error("Falha ao criar tarefa no Kie.ai. Abortando pipeline.")
-        sys.exit(1)
+    if "runway" in model.lower() and num_shots >= 2:
+        logger.info(f"Modo multi-shot ativado: gerando {num_shots} takes de {duration}s em paralelo via Runway...")
 
-    # 2. Polling até concluir
-    task_result = poll_kie_task(
-        api_key=api_key,
-        task_id=task_id,
-        timeout_seconds=timeout_seconds,
-        poll_interval=poll_interval
-    )
+        shot_prompts = [
+            f"{prompt}, shot 1: close-up hands preparing and mixing fresh ingredients, cooking action, dynamic, 9:16 vertical",
+            f"{prompt}, shot 2: close-up finished delicious food ready and steaming, cutting a piece, serving on plate, beautiful texture, 9:16 vertical"
+        ]
+        if num_shots >= 3:
+            shot_prompts.append(
+                f"{prompt}, shot 3: tasting and serving the delicious finished dish, close-up appetizing food presentation, 9:16 vertical"
+            )
 
-    if not task_result:
-        logger.error("Falha na geração do vídeo pelo Kie.ai. Abortando pipeline.")
-        sys.exit(1)
+        def _generate_shot(idx: int, p: str):
+            shot_file = videos_dir / f"temp_shot_{idx}_{timestamp}.mp4"
+            t_id = create_kie_task(
+                api_key=api_key,
+                prompt=p,
+                model=model,
+                aspect_ratio=aspect_ratio,
+                duration=duration,
+                resolution=resolution
+            )
+            if not t_id:
+                return None, 0.0
+            res = poll_kie_task(
+                api_key=api_key,
+                task_id=t_id,
+                timeout_seconds=timeout_seconds,
+                poll_interval=poll_interval
+            )
+            if not res or not res.get("video_url"):
+                return None, 0.0
+            ok = download_video(res["video_url"], shot_file)
+            if ok and validate_video_file(shot_file, min_size_kb=50):
+                return shot_file, res.get("credits_consumed", 12.0)
+            return None, 0.0
 
-    video_url = task_result["video_url"]
-    credits_spent = task_result.get("credits_consumed", 45.0)
-    spent_usd = credits_spent * 0.005
+        with concurrent.futures.ThreadPoolExecutor(max_workers=num_shots) as executor:
+            futures = [executor.submit(_generate_shot, i + 1, p) for i, p in enumerate(shot_prompts[:num_shots])]
+            results = [f.result() for f in futures]
 
-    # 3. Download do vídeo
-    success = download_video(video_url, video_output_path)
-    if not success:
-        logger.error("Falha no download do vídeo gerado. Abortando pipeline.")
-        sys.exit(1)
+        clip_paths = [r[0] for r in results if r[0] is not None]
+        credits_spent = sum(r[1] for r in results if r[1] > 0)
+        spent_usd = credits_spent * 0.005
+
+        if len(clip_paths) < 1:
+            logger.error("Falha ao gerar os shots de vídeo pelo Kie.ai. Abortando pipeline.")
+            sys.exit(1)
+
+        logger.info(f"Unindo {len(clip_paths)} shots via FFmpeg para formar o vídeo completo...")
+        ok_concat = concatenate_clips(clip_paths, video_output_path)
+        if not ok_concat:
+            logger.error("Falha ao concatenar os shots de vídeo.")
+            sys.exit(1)
+
+        for cp in clip_paths:
+            try:
+                cp.unlink(missing_ok=True)
+            except Exception:
+                pass
+    else:
+        # Geração de 1 único clipe (padrão)
+        task_id = create_kie_task(
+            api_key=api_key,
+            prompt=prompt,
+            model=model,
+            aspect_ratio=aspect_ratio,
+            duration=duration,
+            resolution=resolution
+        )
+
+        if not task_id:
+            logger.error("Falha ao criar tarefa no Kie.ai. Abortando pipeline.")
+            sys.exit(1)
+
+        task_result = poll_kie_task(
+            api_key=api_key,
+            task_id=task_id,
+            timeout_seconds=timeout_seconds,
+            poll_interval=poll_interval
+        )
+
+        if not task_result:
+            logger.error("Falha na geração do vídeo pelo Kie.ai. Abortando pipeline.")
+            sys.exit(1)
+
+        video_url = task_result["video_url"]
+        credits_spent = task_result.get("credits_consumed", 12.0 if "runway" in model.lower() else 45.0)
+        spent_usd = credits_spent * 0.005
+
+        success = download_video(video_url, video_output_path)
+        if not success:
+            logger.error("Falha no download do vídeo gerado. Abortando pipeline.")
+            sys.exit(1)
 
     # 4. Validação do arquivo
     if not validate_video_file(video_output_path):

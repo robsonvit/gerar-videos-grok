@@ -158,7 +158,7 @@ def main():
     # Configurações de TTS
     tts_config = settings.get("tts", {})
     api_key = os.environ.get("FISH_API_KEY", "").strip()
-    voice_id = os.environ.get("FISH_VOICE_ID", "").strip() or tts_config.get("voice_id", "da20590a048f483986bf9986e6a87694")
+    voice_id = os.environ.get("FISH_VOICE_ID", "").strip() or tts_config.get("voice_id", "8536d5baf86747afaa2525f031316c2a")
     model = tts_config.get("model", "s2.1-pro-free")
     fallback_voice = tts_config.get("fallback_voice", "pt-BR-FranciscaNeural")
 
