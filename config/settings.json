@@ -21,15 +21,22 @@
   "generation": {
     "service": "kie.ai",
     "base_url": "https://api.kie.ai",
-    "model": "grok-imagine/text-to-video",
+    "model": "runway",
     "mode": "normal",
     "resolution": "720p",
-    "duration_seconds": 10,
+    "duration_seconds": 5,
     "aspect_ratio": "9:16",
     "timeout_seconds": 300,
     "poll_interval_seconds": 5,
     "max_retries": 2,
     "retry_delay_seconds": 10
+  },
+  "tts": {
+    "service": "fish_audio",
+    "model": "s2.1-pro-free",
+    "voice_id": "da20590a048f483986bf9986e6a87694",
+    "fallback_service": "edge_tts",
+    "fallback_voice": "pt-BR-FranciscaNeural"
   },
   "script": {
     "max_length_chars": 2500,
@@ -50,6 +57,7 @@
   "output": {
     "scripts_dir": "output/scripts",
     "videos_dir": "output/videos",
+    "audio_dir": "output/audio",
     "processed_dir": "output/processed",
     "logs_dir": "output/logs",
     "screenshots_dir": "output/screenshots"

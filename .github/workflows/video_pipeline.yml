@@ -1,4 +1,4 @@
-name: 🎬 Video Pipeline - Gerar Vídeo com Grok
+name: 🎬 Video Pipeline - Gerar Vídeo com Runway + Fish Audio
 
 on:
   # Execução manual com parâmetros opcionais
@@ -10,6 +10,10 @@ on:
         default: ""
       titulo:
         description: "Título do vídeo (opcional)"
+        required: false
+        default: ""
+      fish_voice_id:
+        description: "ID da voz do Fish Audio (opcional - deixe vazio para usar a voz padrão)"
         required: false
         default: ""
       notify_telegram:
@@ -57,7 +61,7 @@ jobs:
 
       - name: 📁 Criar diretórios de saída
         run: |
-          mkdir -p output/scripts output/videos output/processed output/logs output/screenshots
+          mkdir -p output/scripts output/videos output/audio output/processed output/logs output/screenshots
 
       - name: 📝 Gerar roteiro via OpenRouter
         id: gen
@@ -90,10 +94,10 @@ jobs:
           retention-days: 30
 
   # ─────────────────────────────────────────────
-  # ETAPA 2: Gerar Vídeo via Kie.ai (Grok Imagine)
+  # ETAPA 2A: Gerar Vídeo via Kie.ai (Runway)
   # ─────────────────────────────────────────────
   generate-video:
-    name: 🎥 Gerar Vídeo via Kie.ai
+    name: 🎥 Gerar Vídeo via Kie.ai (Runway)
     runs-on: ubuntu-latest
     needs: generate-script
     outputs:
@@ -134,6 +138,10 @@ jobs:
           SCRIPT_PATH: ${{ needs.generate-script.outputs.script_path }}
           PROMPT_VISUAL: ${{ needs.generate-script.outputs.prompt_visual }}
         run: |
+          SCRIPT_FILE=$(ls -t output/scripts/*.json 2>/dev/null | head -1)
+          if [ -n "$SCRIPT_FILE" ]; then
+            export SCRIPT_PATH="$SCRIPT_FILE"
+          fi
           python scripts/generate_video.py
         timeout-minutes: 10
 
@@ -156,12 +164,79 @@ jobs:
           retention-days: 7
 
   # ─────────────────────────────────────────────
+  # ETAPA 2B: Gerar Narração via Fish Audio (Gratuito)
+  # ─────────────────────────────────────────────
+  generate-audio:
+    name: 🎤 Gerar Narração (Fish Audio)
+    runs-on: ubuntu-latest
+    needs: generate-script
+    outputs:
+      audio_path: ${{ steps.gen_audio.outputs.audio_path }}
+      audio_filename: ${{ steps.gen_audio.outputs.audio_filename }}
+      audio_provider: ${{ steps.gen_audio.outputs.audio_provider }}
+
+    steps:
+      - name: ⬇️ Checkout do repositório
+        uses: actions/checkout@v4
+
+      - name: 🐍 Configurar Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: 📦 Instalar dependências Python
+        run: pip install requests edge-tts
+
+      - name: 📁 Criar diretórios de saída
+        run: |
+          mkdir -p output/audio output/scripts output/logs
+
+      - name: ⬇️ Baixar roteiro do artefato anterior
+        uses: actions/download-artifact@v4
+        with:
+          name: roteiro-${{ github.run_number }}
+          path: output/scripts/
+
+      - name: 🎤 Gerar áudio de narração
+        id: gen_audio
+        env:
+          FISH_API_KEY: ${{ secrets.FISH_API_KEY }}
+          FISH_VOICE_ID: ${{ github.event.inputs.fish_voice_id }}
+          SCRIPT_PATH: ${{ needs.generate-script.outputs.script_path }}
+        run: |
+          SCRIPT_FILE=$(ls -t output/scripts/*.json 2>/dev/null | head -1)
+          if [ -n "$SCRIPT_FILE" ]; then
+            export SCRIPT_PATH="$SCRIPT_FILE"
+          fi
+          python scripts/generate_audio.py
+        timeout-minutes: 5
+
+      - name: ✅ Verificar áudio gerado
+        run: |
+          AUDIO_FILE=$(ls -t output/audio/*.mp3 2>/dev/null | head -1)
+          if [ -z "$AUDIO_FILE" ]; then
+            echo "❌ Nenhum arquivo de áudio encontrado!"
+            ls -la output/audio/ || echo "Diretório vazio"
+            exit 1
+          fi
+          SIZE=$(du -sh "$AUDIO_FILE" | cut -f1)
+          echo "✅ Áudio encontrado: $AUDIO_FILE (${SIZE})"
+
+      - name: 📤 Salvar áudio como artefato
+        uses: actions/upload-artifact@v4
+        with:
+          name: audio-raw-${{ github.run_number }}
+          path: output/audio/
+          retention-days: 7
+
+  # ─────────────────────────────────────────────
   # ETAPA 3: Processar Vídeo com FFmpeg
   # ─────────────────────────────────────────────
   process-video:
-    name: ⚙️ Processar Vídeo (FFmpeg)
+    name: ⚙️ Processar Vídeo + Áudio (FFmpeg)
     runs-on: ubuntu-latest
-    needs: generate-video
+    needs: [generate-video, generate-audio]
     outputs:
       processed_path: ${{ steps.proc.outputs.processed_path }}
       processed_filename: ${{ steps.proc.outputs.processed_filename }}
@@ -186,18 +261,25 @@ jobs:
         run: pip install requests
 
       - name: 📁 Criar diretórios de saída
-        run: mkdir -p output/videos output/processed output/logs
+        run: mkdir -p output/videos output/audio output/processed output/logs
 
-      - name: ⬇️ Baixar vídeo raw do artefato anterior
+      - name: ⬇️ Baixar vídeo raw
         uses: actions/download-artifact@v4
         with:
           name: video-raw-${{ github.run_number }}
           path: output/videos/
 
-      - name: ⬙️ Processar vídeo com FFmpeg
+      - name: ⬇️ Baixar áudio de narração
+        uses: actions/download-artifact@v4
+        with:
+          name: audio-raw-${{ github.run_number }}
+          path: output/audio/
+
+      - name: ⬙️ Processar vídeo e sincronizar narração
         id: proc
         env:
           VIDEO_PATH: ${{ needs.generate-video.outputs.video_path }}
+          AUDIO_PATH: ${{ needs.generate-audio.outputs.audio_path }}
         run: |
           # Se VIDEO_PATH não estiver disponível, encontra o arquivo automaticamente
           if [ -z "$VIDEO_PATH" ] || [ ! -f "$VIDEO_PATH" ]; then
@@ -209,6 +291,16 @@ jobs:
             export VIDEO_PATH="$VIDEO_FILE"
             echo "Usando vídeo encontrado: $VIDEO_PATH"
           fi
+
+          # Se AUDIO_PATH não estiver disponível, encontra o arquivo automaticamente
+          if [ -z "$AUDIO_PATH" ] || [ ! -f "$AUDIO_PATH" ]; then
+            AUDIO_FILE=$(ls -t output/audio/*.mp3 2>/dev/null | head -1)
+            if [ -n "$AUDIO_FILE" ]; then
+              export AUDIO_PATH="$AUDIO_FILE"
+              echo "Usando áudio encontrado: $AUDIO_PATH"
+            fi
+          fi
+
           python scripts/process_video.py
         timeout-minutes: 10
 
@@ -238,7 +330,7 @@ jobs:
   send-telegram:
     name: 📱 Enviar para Telegram
     runs-on: ubuntu-latest
-    needs: [generate-script, generate-video, process-video]
+    needs: [generate-script, generate-video, generate-audio, process-video]
     if: ${{ github.event.inputs.notify_telegram != 'false' }}
 
     steps:
@@ -278,10 +370,10 @@ jobs:
           CREDITS_REMAINING: ${{ needs.generate-video.outputs.credits_remaining }}
           SPENT_USD: ${{ needs.generate-video.outputs.spent_usd }}
           REMAINING_USD: ${{ needs.generate-video.outputs.remaining_usd }}
+          AUDIO_PROVIDER: ${{ needs.generate-audio.outputs.audio_provider }}
           PROCESSED_PATH: ${{ needs.process-video.outputs.processed_path }}
           SCRIPT_PATH: ${{ needs.generate-script.outputs.script_path }}
         run: |
-          # Se PROCESSED_PATH não estiver disponível, encontra automaticamente
           if [ -z "$PROCESSED_PATH" ] || [ ! -f "$PROCESSED_PATH" ]; then
             PROC_FILE=$(ls -t output/processed/*.mp4 2>/dev/null | head -1)
             if [ -z "$PROC_FILE" ]; then
@@ -341,7 +433,6 @@ jobs:
           FACEBOOK_PAGE_ID: ${{ secrets.FACEBOOK_PAGE_ID }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
         run: |
-          # Se PROCESSED_PATH não estiver disponível, encontra automaticamente
           if [ -z "$PROCESSED_PATH" ] || [ ! -f "$PROCESSED_PATH" ]; then
             PROC_FILE=$(ls -t output/processed/*.mp4 2>/dev/null | head -1)
             if [ -z "$PROC_FILE" ]; then
@@ -365,7 +456,7 @@ jobs:
   pipeline-summary:
     name: 📊 Resumo do Pipeline
     runs-on: ubuntu-latest
-    needs: [generate-script, generate-video, process-video, send-telegram, send-facebook]
+    needs: [generate-script, generate-video, generate-audio, process-video, send-telegram, send-facebook]
     if: always()
 
     steps:
@@ -376,7 +467,8 @@ jobs:
           echo "| Etapa | Status |" >> $GITHUB_STEP_SUMMARY
           echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
           echo "| 📝 Gerar Roteiro | ${{ needs.generate-script.result == 'success' && '✅ Sucesso' || '❌ Falhou' }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| 🎥 Gerar Vídeo | ${{ needs.generate-video.result == 'success' && '✅ Sucesso' || needs.generate-video.result == 'skipped' && '⏭️ Pulado' || '❌ Falhou' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🎥 Gerar Vídeo (Runway) | ${{ needs.generate-video.result == 'success' && '✅ Sucesso' || needs.generate-video.result == 'skipped' && '⏭️ Pulado' || '❌ Falhou' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🎤 Gerar Narração (Fish Audio) | ${{ needs.generate-audio.result == 'success' && '✅ Sucesso' || needs.generate-audio.result == 'skipped' && '⏭️ Pulado' || '❌ Falhou' }} |" >> $GITHUB_STEP_SUMMARY
           echo "| ⚙️ Processar FFmpeg | ${{ needs.process-video.result == 'success' && '✅ Sucesso' || needs.process-video.result == 'skipped' && '⏭️ Pulado' || '❌ Falhou' }} |" >> $GITHUB_STEP_SUMMARY
           echo "| 📱 Enviar Telegram | ${{ needs.send-telegram.result == 'success' && '✅ Sucesso' || needs.send-telegram.result == 'skipped' && '⏭️ Pulado' || '❌ Falhou' }} |" >> $GITHUB_STEP_SUMMARY
           echo "| 📱 Enviar Facebook | ${{ needs.send-facebook.result == 'success' && '✅ Sucesso' || needs.send-facebook.result == 'skipped' && '⏭️ Pulado' || '❌ Falhou' }} |" >> $GITHUB_STEP_SUMMARY
@@ -384,7 +476,7 @@ jobs:
           echo "**Execução:** #${{ github.run_number }} | **Trigger:** ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
           echo "**Título:** ${{ needs.generate-script.outputs.script_title }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### 💰 Custos & Créditos (Kie.ai)" >> $GITHUB_STEP_SUMMARY
-          echo "- **Créditos gastos:** ${{ needs.generate-video.outputs.credits_spent }} (~US\$ ${{ needs.generate-video.outputs.spent_usd }})" >> $GITHUB_STEP_SUMMARY
-          echo "- **Saldo restante:** ${{ needs.generate-video.outputs.credits_remaining }} créditos (~US\$ ${{ needs.generate-video.outputs.remaining_usd }})" >> $GITHUB_STEP_SUMMARY
-
+          echo "### 💰 Custos & Créditos" >> $GITHUB_STEP_SUMMARY
+          echo "- **Vídeo (Runway via Kie.ai):** ${{ needs.generate-video.outputs.credits_spent }} créditos (~US\$ ${{ needs.generate-video.outputs.spent_usd }})" >> $GITHUB_STEP_SUMMARY
+          echo "- **Narração (Fish Audio):** Gratuito (Plano Developer)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Saldo restante Kie.ai:** ${{ needs.generate-video.outputs.credits_remaining }} créditos (~US\$ ${{ needs.generate-video.outputs.remaining_usd }})" >> $GITHUB_STEP_SUMMARY

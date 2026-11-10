@@ -79,6 +79,22 @@ def get_video_info(video_path: Path) -> dict | None:
         return None
 
 
+def get_media_duration(file_path: Path) -> float:
+    """Obtém a duração exata do arquivo de mídia em segundos."""
+    info = get_video_info(file_path)
+    if not info:
+        return 0.0
+    duration = float(info.get("format", {}).get("duration", 0))
+    if duration == 0:
+        for stream in info.get("streams", []):
+            if "duration" in stream:
+                try:
+                    return float(stream["duration"])
+                except Exception:
+                    pass
+    return duration
+
+
 def validate_video_duration(video_path: Path, expected_duration: float, tolerance: float = 5.0) -> bool:
     """Valida se a duração do vídeo está dentro da tolerância esperada."""
     info = get_video_info(video_path)
@@ -125,14 +141,17 @@ def check_audio_stream(video_path: Path) -> bool:
 def process_video(
     input_path: Path,
     output_path: Path,
-    settings: dict
+    settings: dict,
+    audio_path: Path | None = None
 ) -> bool:
     """
     Processa o vídeo com FFmpeg aplicando:
+    - Mesclagem de narração de áudio externa (Fish Audio / Edge-TTS) se fornecida
+    - Ajuste suave de velocidade do vídeo para coincidir com a duração do áudio (slow-motion culinário)
     - Normalização de loudness (EBU R128)
     - Conversão para H.264 + AAC
-    - Padronização de resolução vertical
-    - Otimização de bitrate
+    - Padronização de resolução vertical 9:16 (720x1280)
+    - Otimização de bitrate e faststart
     """
     video_config = settings.get("video", {})
     audio_config = settings.get("audio", {})
@@ -150,60 +169,107 @@ def process_video(
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Verifica se tem áudio para normalizar
-    has_audio = check_audio_stream(input_path)
+    # Caso 1: Mesclagem com áudio externo (Fish Audio / Edge-TTS)
+    if audio_path and audio_path.exists():
+        logger.info(f"Integrando narração de áudio externa: {audio_path.name}")
+        v_dur = get_media_duration(input_path)
+        a_dur = get_media_duration(audio_path)
+        logger.info(f"Durações -> Vídeo raw: {v_dur:.2f}s | Áudio narração: {a_dur:.2f}s")
 
-    # Monta filtros de vídeo
-    # scale2ref garante que o vídeo fique em formato vertical 9:16
-    video_filters = [
-        "scale=720:1280:force_original_aspect_ratio=decrease",
-        "pad=720:1280:(ow-iw)/2:(oh-ih)/2:black",
-        f"fps={fps}"
-    ]
-    vf_string = ",".join(video_filters)
+        # Se o vídeo for menor que o áudio (ex: Runway 5s e áudio 9.7s),
+        # ajusta suavemente o PTS do vídeo para estender até a narração (slow-motion gourmet)
+        video_filters = []
+        if v_dur > 0 and a_dur > 0 and v_dur < a_dur:
+            pts_factor = a_dur / v_dur
+            logger.info(f"Ajustando velocidade do vídeo (fator {pts_factor:.3f}x) para sincronização perfeita com a narração")
+            video_filters.append(f"setpts={pts_factor:.4f}*PTS")
 
-    # Monta filtros de áudio
-    if has_audio and normalize:
-        af_string = (
-            f"loudnorm=I={target_loudness}:TP={true_peak}:LRA={lra}:"
-            f"print_format=summary"
-        )
+        video_filters.extend([
+            "scale=720:1280:force_original_aspect_ratio=decrease",
+            "pad=720:1280:(ow-iw)/2:(oh-ih)/2:black",
+            f"fps={fps}"
+        ])
+        vf_string = ",".join(video_filters)
+
+        audio_filters = ["apad"]
+        if normalize:
+            audio_filters.append(f"loudnorm=I={target_loudness}:TP={true_peak}:LRA={lra}:print_format=summary")
+        af_string = ",".join(audio_filters)
+
+        cmd = [
+            "ffmpeg",
+            "-y",
+            "-i", str(input_path),
+            "-i", str(audio_path),
+            "-filter_complex", f"[0:v]{vf_string}[v];[1:a]{af_string}[a]",
+            "-map", "[v]",
+            "-map", "[a]",
+            "-c:v", codec_video,
+            "-preset", "medium",
+            "-crf", "23",
+            "-b:v", video_bitrate,
+            "-maxrate", video_bitrate,
+            "-bufsize", "4000k",
+            "-pix_fmt", "yuv420p",
+            "-movflags", "+faststart",
+            "-c:a", codec_audio,
+            "-b:a", audio_bitrate,
+            "-ar", "44100",
+            "-profile:v", "high",
+            "-level", "4.0",
+            "-shortest",
+            str(output_path)
+        ]
+
+    # Caso 2: Processamento padrão usando áudio embutido no vídeo (se houver)
     else:
-        af_string = None
+        has_audio = check_audio_stream(input_path)
+        video_filters = [
+            "scale=720:1280:force_original_aspect_ratio=decrease",
+            "pad=720:1280:(ow-iw)/2:(oh-ih)/2:black",
+            f"fps={fps}"
+        ]
+        vf_string = ",".join(video_filters)
 
-    # Constrói o comando FFmpeg
-    cmd = [
-        "ffmpeg",
-        "-y",  # Sobrescreve sem perguntar
-        "-i", str(input_path),
-        "-vf", vf_string,
-        "-c:v", codec_video,
-        "-preset", "medium",
-        "-crf", "23",
-        "-b:v", video_bitrate,
-        "-maxrate", video_bitrate,
-        "-bufsize", "4000k",
-        "-pix_fmt", "yuv420p",  # Compatibilidade máxima
-        "-movflags", "+faststart",  # Streaming otimizado
-    ]
+        if has_audio and normalize:
+            af_string = (
+                f"loudnorm=I={target_loudness}:TP={true_peak}:LRA={lra}:"
+                f"print_format=summary"
+            )
+        else:
+            af_string = None
 
-    if has_audio and af_string:
-        cmd.extend(["-af", af_string])
-        cmd.extend(["-c:a", codec_audio])
-        cmd.extend(["-b:a", audio_bitrate])
-        cmd.extend(["-ar", "44100"])  # Sample rate padrão
-    elif has_audio:
-        cmd.extend(["-c:a", codec_audio])
-        cmd.extend(["-b:a", audio_bitrate])
-    else:
-        cmd.extend(["-an"])  # Remove áudio se não existir
+        cmd = [
+            "ffmpeg",
+            "-y",
+            "-i", str(input_path),
+            "-vf", vf_string,
+            "-c:v", codec_video,
+            "-preset", "medium",
+            "-crf", "23",
+            "-b:v", video_bitrate,
+            "-maxrate", video_bitrate,
+            "-bufsize", "4000k",
+            "-pix_fmt", "yuv420p",
+            "-movflags", "+faststart",
+        ]
 
-    # Adiciona configurações de compatibilidade
-    cmd.extend([
-        "-profile:v", "high",
-        "-level", "4.0",
-        str(output_path)
-    ])
+        if has_audio and af_string:
+            cmd.extend(["-af", af_string])
+            cmd.extend(["-c:a", codec_audio])
+            cmd.extend(["-b:a", audio_bitrate])
+            cmd.extend(["-ar", "44100"])
+        elif has_audio:
+            cmd.extend(["-c:a", codec_audio])
+            cmd.extend(["-b:a", audio_bitrate])
+        else:
+            cmd.extend(["-an"])
+
+        cmd.extend([
+            "-profile:v", "high",
+            "-level", "4.0",
+            str(output_path)
+        ])
 
     logger.info(f"Executando FFmpeg: {' '.join(cmd[:8])}...")
     logger.info(f"Input: {input_path}")
@@ -276,7 +342,8 @@ def main():
     base_dir = Path(__file__).parent.parent
 
     # Parâmetros via variáveis de ambiente
-    video_path_str = os.environ.get("VIDEO_PATH", "")
+    video_path_str = os.environ.get("VIDEO_PATH", "").strip()
+    audio_path_str = os.environ.get("AUDIO_PATH", "").strip()
 
     if not video_path_str:
         logger.error("Variável VIDEO_PATH não definida.")
@@ -286,6 +353,18 @@ def main():
     if not input_path.exists():
         logger.error(f"Arquivo de entrada não encontrado: {input_path}")
         sys.exit(1)
+
+    audio_path = None
+    if audio_path_str and Path(audio_path_str).exists():
+        audio_path = Path(audio_path_str)
+    else:
+        # Tenta auto-detectar o áudio gerado mais recente em output/audio/
+        audio_dir = base_dir / "output" / "audio"
+        if audio_dir.exists():
+            mp3_files = sorted(audio_dir.glob("*.mp3"), key=os.path.getmtime, reverse=True)
+            if mp3_files:
+                audio_path = mp3_files[0]
+                logger.info(f"Áudio de narração detectado automaticamente: {audio_path.name}")
 
     if not check_ffmpeg():
         sys.exit(1)
@@ -302,15 +381,17 @@ def main():
     output_path = processed_dir / output_filename
 
     logger.info("=== INICIANDO PROCESSAMENTO DE VÍDEO ===")
-    logger.info(f"Input: {input_path}")
+    logger.info(f"Input Vídeo: {input_path}")
+    if audio_path:
+        logger.info(f"Input Áudio: {audio_path}")
     logger.info(f"Output: {output_path}")
 
     # Valida duração do input antes de processar
-    expected_duration = settings.get("video", {}).get("target_duration_seconds", 15)
+    expected_duration = settings.get("video", {}).get("target_duration_seconds", 10)
     validate_video_duration(input_path, expected_duration)
 
     # Processa o vídeo
-    success = process_video(input_path, output_path, settings)
+    success = process_video(input_path, output_path, settings, audio_path=audio_path)
 
     if not success:
         logger.error("Falha no processamento do vídeo. Abortando pipeline.")

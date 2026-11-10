@@ -71,7 +71,8 @@ def build_caption(
     credits_spent: float | None = None,
     credits_remaining: float | None = None,
     spent_usd: float | None = None,
-    remaining_usd: float | None = None
+    remaining_usd: float | None = None,
+    audio_provider: str | None = None
 ) -> str:
     """Monta a legenda do vídeo para envio no Telegram."""
     tg_config = settings.get("telegram", {})
@@ -89,7 +90,14 @@ def build_caption(
         narracao = narracao[:350] + "..."
         
     estilo = html.escape(script_data.get("estilo", ""))
-    model_used = html.escape(script_data.get("_meta", {}).get("model_name", "Grok Imagine (Kie.ai)"))
+    gen_model = settings.get("generation", {}).get("model", "runway")
+    if "runway" in gen_model.lower():
+        model_used = "Runway Gen-3 (Kie.ai)"
+    elif "grok" in gen_model.lower():
+        model_used = "Grok Imagine (Kie.ai)"
+    else:
+        model_used = html.escape(script_data.get("_meta", {}).get("model_name", f"{gen_model} (Kie.ai)"))
+
     timestamp = datetime.now().strftime("%d/%m/%Y %H:%M")
 
     caption_lines = [
@@ -101,25 +109,29 @@ def build_caption(
 
     # Bloco de custos e saldo do Kie.ai
     if credits_spent is not None or credits_remaining is not None:
-        c_spent = credits_spent if credits_spent is not None else 45.0
+        c_spent = credits_spent if credits_spent is not None else 12.0
         s_usd = spent_usd if spent_usd is not None else (c_spent * 0.005)
 
         billing_lines = ["\n💰 <b>Custos & Saldo (Kie.ai):</b>"]
-        billing_lines.append(f"├ ⚡ <b>Gasto:</b> {c_spent:.1f} créditos (~${s_usd:.3f} USD)")
+        billing_lines.append(f"├ ⚡ <b>Gasto Vídeo:</b> {c_spent:.1f} créditos (~${s_usd:.3f} USD)")
 
         if credits_remaining is not None:
             r_usd = remaining_usd if remaining_usd is not None else (credits_remaining * 0.005)
             billing_lines.append(f"└ 💳 <b>Saldo restante:</b> {credits_remaining:.1f} créditos (~${r_usd:.2f} USD)")
         else:
-            billing_lines[1] = f"└ ⚡ <b>Gasto:</b> {c_spent:.1f} créditos (~${s_usd:.3f} USD)"
+            billing_lines[1] = f"└ ⚡ <b>Gasto Vídeo:</b> {c_spent:.1f} créditos (~${s_usd:.3f} USD)"
 
         caption_lines.extend(billing_lines)
 
+    if audio_provider:
+        prov_name = "Fish Audio (Gratuito / Dev)" if "fish" in audio_provider.lower() else "Edge-TTS (Gratuito)"
+        caption_lines.append(f"\n🎙️ <b>Voz / Narração:</b> {prov_name}")
+
     if estilo:
-        caption_lines.append(f"\n🎨 Estilo: {estilo}")
+        caption_lines.append(f"🎨 Estilo: {estilo}")
 
     caption_lines.extend([
-        f"\n🤖 Modelo: {model_used}",
+        f"🤖 Modelo Vídeo: {model_used}",
         f"📅 {timestamp}",
         f"\n#videogerado #ia #shorts #receitas"
     ])
@@ -316,6 +328,8 @@ def main():
     if remaining_usd is None and credits_remaining is not None:
         remaining_usd = credits_remaining * 0.005
 
+    audio_provider = os.environ.get("AUDIO_PROVIDER", "").strip()
+
     caption = build_caption(
         script_data=script_data,
         video_filename=processed_path.name,
@@ -323,7 +337,8 @@ def main():
         credits_spent=credits_spent,
         credits_remaining=credits_remaining,
         spent_usd=spent_usd,
-        remaining_usd=remaining_usd
+        remaining_usd=remaining_usd,
+        audio_provider=audio_provider
     )
 
     logger.info("=== INICIANDO ENVIO PARA TELEGRAM ===")

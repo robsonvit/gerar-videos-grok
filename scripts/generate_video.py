@@ -52,14 +52,15 @@ def load_script(script_path: str) -> dict:
 def create_kie_task(
     api_key: str,
     prompt: str,
-    model: str = "grok-imagine/text-to-video",
+    model: str = "runway",
     aspect_ratio: str = "9:16",
-    duration: int = 10,
+    duration: int = 5,
     resolution: str = "720p",
     mode: str = "normal"
 ) -> str | None:
     """
     Envia a tarefa de geração para a API do Kie.ai.
+    Suporta o modelo Runway (com callBackUrl e quality) e modelos Grok/Veo.
     Retorna o taskId ou None em caso de falha.
     """
     url = "https://api.kie.ai/api/v1/jobs/createTask"
@@ -67,16 +68,30 @@ def create_kie_task(
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json"
     }
-    payload = {
-        "model": model,
-        "input": {
-            "prompt": prompt,
-            "aspect_ratio": aspect_ratio,
-            "duration": duration,
-            "resolution": resolution,
-            "mode": mode
+
+    if "runway" in model.lower():
+        payload = {
+            "model": "runway",
+            "callBackUrl": "https://api.example.com/callback",
+            "input": {
+                "prompt": prompt,
+                "aspect_ratio": aspect_ratio,
+                "duration": duration,
+                "quality": resolution,
+                "watermark": ""
+            }
         }
-    }
+    else:
+        payload = {
+            "model": model,
+            "input": {
+                "prompt": prompt,
+                "aspect_ratio": aspect_ratio,
+                "duration": duration,
+                "resolution": resolution,
+                "mode": mode
+            }
+        }
 
     logger.info(f"Submetendo tarefa ao Kie.ai (modelo: {model}, {resolution}, {duration}s, {aspect_ratio})...")
     try:
@@ -283,8 +298,12 @@ def main():
         prompt_base = re.sub(r'(?i)15\s*seconds\b', '', prompt_base)
         prompt_base = re.sub(r'\s{2,}', ' ', prompt_base).strip()
 
-        # Adiciona a instrução de narração audível em PT-BR para o modelo
-        if narracao:
+        # Se o modelo for Runway ou houver serviço de TTS externo configurado,
+        # mantém o prompt puramente visual de alta qualidade culinária
+        tts_service = settings.get("tts", {}).get("service")
+        if "runway" in model.lower() or tts_service:
+            prompt = prompt_base
+        elif narracao:
             prompt = f"{prompt_base}\n\nAudio: AI voice speaking in Brazilian Portuguese saying EXACTLY this: '{narracao}'"
         else:
             prompt = prompt_base
