@@ -118,6 +118,11 @@ jobs:
           python-version: "3.11"
           cache: "pip"
 
+      - name: 📦 Instalar FFmpeg
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y ffmpeg
+
       - name: 📦 Instalar dependências Python
         run: pip install requests
 
